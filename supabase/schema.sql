@@ -103,6 +103,18 @@ create policy "orders self delete" on public.orders for delete using (auth.uid()
 create policy "orders admin read"  on public.orders for select using (public.is_admin());
 create policy "orders admin update" on public.orders for update using (public.is_admin()); -- lets admin toggle "paid"
 
+-- ---------- app_settings: InstaPay QR (admin can replace) ----------
+create table if not exists public.app_settings (
+  key        text primary key,
+  value      text not null,
+  updated_at timestamptz not null default now()
+);
+alter table public.app_settings enable row level security;
+drop policy if exists "settings read"  on public.app_settings;
+drop policy if exists "settings write" on public.app_settings;
+create policy "settings read"  on public.app_settings for select using (auth.role() = 'authenticated');
+create policy "settings write" on public.app_settings for all using (public.is_admin()) with check (public.is_admin());
+
 -- ============================================================
 -- Make yourself an admin (run AFTER you sign up once in the app):
 --   update public.profiles set is_admin = true where id =

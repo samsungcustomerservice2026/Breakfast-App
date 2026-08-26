@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480">
+  <rect width="480" height="480" rx="24" fill="#fffdf8"/>
+  <rect x="28" y="28" width="424" height="424" rx="16" fill="none" stroke="#e7ddcb" stroke-width="4"/>
+  <text x="240" y="200" text-anchor="middle" font-family="Cairo, Tahoma, sans-serif" font-size="26" font-weight="700" fill="#c0392b">??? ?? ????????</text>
+  <text x="240" y="250" text-anchor="middle" font-family="Cairo, Tahoma, sans-serif" font-size="16" fill="#8a7f70">?????? ???? ?????? ?? ???</text>
+  <text x="240" y="290" text-anchor="middle" font-family="Cairo, Tahoma, sans-serif" font-size="15" fill="#8a7f70">??????? ? ???? ????? ??</text>
+</svg>

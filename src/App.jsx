@@ -1,13 +1,33 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { ShoppingCart, Plus, Minus, Trash2, Check, ClipboardCopy, RefreshCw, ArrowLeft, LogOut, ChefHat, Layers, Users, Phone } from "lucide-react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { ShoppingCart, Plus, Minus, Trash2, Check, ClipboardCopy, RefreshCw, Layers, Users, Phone, RotateCcw, ChevronDown } from "lucide-react";
 import { supabase, configError } from "./supabase.js";
 import { S, globalCss } from "./styles.js";
+import { itemImage, onImgError } from "./itemImages.js";
+import { afeya } from "./afeyat.js";
+import { pickSituationMeme } from "./memes.js";
+import { loadPayQr, savePayQr, loadPayLink, savePayLink, fileToDataUrl, normalizePayLink, settingsSaveHint, PAY_QR_FALLBACK } from "./settings.js";
 
-const TIER_LABELS = { shami: "Shami", balady: "Balady", sm: "Small", md: "Medium", lg: "Large" };
-const money = (n) => `${Number(n || 0).toFixed(0)} EGP`;
+const TIER_LABELS = { shami: "شامي", balady: "بلدي", sm: "صغير", md: "وسط", lg: "كبير" };
+const DELIVERY_FEE = 5;
+const Logo = ({ size = "sm" }) => (
+  <img src="/logo.png" alt="" style={size === "lg" ? S.logoImgLg : S.logoImgSm} />
+);
+const money = (n) => `${Number(n || 0).toFixed(0)} جنيه`;
+const foodOf = (items) => (items || []).reduce((s, l) => s + Number(l.price || 0) * Number(l.qty || 0), 0);
+const Bill = ({ food }) => (
+  <div dir="rtl">
+    <div style={S.billRow}><span>الأكل</span><span>{money(food)}</span></div>
+    <div style={S.billRow}><span>توصيل</span><span>{money(DELIVERY_FEE)}</span></div>
+    <div style={S.billGrand}><span>الحساب</span><span>{money(Number(food || 0) + DELIVERY_FEE)}</span></div>
+  </div>
+);
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const prettyDate = (d) => {
-  try { return new Date(d + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: "numeric" }); }
+  try { return new Date(d + "T00:00:00").toLocaleDateString("ar-EG", { weekday: "long", day: "numeric", month: "long" }); }
+  catch { return d; }
+};
+const weekdayAr = (d) => {
+  try { return new Date(d + "T00:00:00").toLocaleDateString("ar-EG", { weekday: "long" }); }
   catch { return d; }
 };
 
@@ -57,7 +77,7 @@ export default function App() {
         await loadMenu();
         setPhase("ready");
       } catch (e) {
-        setErrMsg(e.message || "Something went wrong loading your account.");
+        setErrMsg(e.message || "حصلت حاجة وحشة وأحنا بنفتح حسابك.");
         setPhase("error");
       }
     })();
@@ -79,20 +99,20 @@ export default function App() {
   const signOut = async () => { await supabase.auth.signOut(); setView("shop"); };
 
   if (phase === "error") return (<Center><p style={{ ...S.loadText, maxWidth: 360 }}>{errMsg}</p></Center>);
-  if (phase === "loading") return (<Center><div style={S.loadPulse}><ChefHat size={40} strokeWidth={1.5} /></div><p style={S.loadText}>Warming up the kitchen…</p></Center>);
+  if (phase === "loading") return (<Center><img src="/logo.png" alt="" style={{ ...S.logoImgLg, animation: "floaty 2.2s ease-in-out infinite" }} /><p style={S.loadText} dir="rtl">ثواني يا معلم… الهيئة بتسخّن</p></Center>);
   if (phase === "auth") return (<AuthScreen showToast={showToast} />);
   if (phase === "needsProfile") return (<ProfileScreen session={session} onDone={(p) => { setProfile(p); loadMenu().then(() => setPhase("ready")); }} />);
 
   return (
     <div style={S.app}>
       <header style={S.header}>
-        <div style={S.brandRowSm}><div style={S.logoDotSm}><ChefHat size={16} strokeWidth={2.2} /></div><span style={S.headerTitle}>El Shabrawy</span></div>
+        <div style={S.brandRowSm}><Logo /><span style={S.headerTitle} dir="rtl">هيئة مكافحة الجوع</span></div>
         <div style={S.headerRight}>
-          <span style={S.hello}>Hi, {profile.name.split(" ")[0]}</span>
+          <span style={S.hello} dir="rtl">يا {profile.name.split(" ")[0]}</span>
           {profile.is_admin && (view === "shop"
-            ? <button style={S.ghostBtn} onClick={() => setView("admin")}><Users size={15} /> Admin</button>
-            : <button style={S.ghostBtn} onClick={() => setView("shop")}><ArrowLeft size={15} /> Menu</button>)}
-          <button style={S.ghostBtn} onClick={signOut} title="Sign out"><LogOut size={15} /></button>
+            ? <button style={S.ghostBtn} onClick={() => setView("admin")}>المأمور</button>
+            : <button style={S.ghostBtn} onClick={() => setView("shop")}>المنيو</button>)}
+          <button style={S.ghostBtn} onClick={signOut} title="سيّب المكان">خروج</button>
         </div>
       </header>
 
@@ -119,19 +139,19 @@ function AuthScreen() {
 
   const submit = async () => {
     setErr(""); setOk("");
-    if (!email.trim() || pw.length < 6) return setErr("Enter an email and a password of at least 6 characters.");
+    if (!email.trim() || pw.length < 6) return setErr("إيميل وباسورد من 6 حروف… مش أصعب من كده.");
     setBusy(true);
     try {
       if (mode === "signup") {
         const { error } = await supabase.auth.signUp({ email: email.trim(), password: pw });
         if (error) throw error;
-        setOk("Account created. If email confirmation is on, check your inbox, then sign in.");
+        setOk("الحساب اتفتح. لو التأكيد شغال، بصّ في الإيميل وبعدين ادخل.");
         setMode("signin");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
         if (error) throw error;
       }
-    } catch (e) { setErr(e.message || "Couldn't complete that. Try again."); }
+    } catch (e) { setErr(e.message || "ما نفعش يا معلم. جرّب تاني."); }
     finally { setBusy(false); }
   };
 
@@ -139,20 +159,20 @@ function AuthScreen() {
     <Center>
       <div style={S.signCard}>
         <div style={S.brandRow}>
-          <div style={S.logoDot}><ChefHat size={22} strokeWidth={2} /></div>
-          <div><h1 style={S.brandTitle}>El Shabrawy</h1><p style={S.brandSub}>Office breakfast, sorted before 9.</p></div>
+          <Logo size="lg" />
+          <div><h1 style={S.brandTitle} dir="rtl">هيئة مكافحة الجوع</h1><p style={S.brandSub} dir="rtl">الجوع كافر — والفطار قبل التسعة</p></div>
         </div>
-        <label style={S.label}>Email</label>
-        <input style={S.input} type="email" value={email} placeholder="you@company.com" onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
-        <label style={{ ...S.label, marginTop: 14 }}>Password</label>
+        <label style={S.label}>الإيميل</label>
+        <input style={S.input} type="email" value={email} placeholder="الإيميل بتاع الشغل" onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
+        <label style={{ ...S.label, marginTop: 14 }}>الباسورد</label>
         <input style={S.input} type="password" value={pw} placeholder="••••••••" onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
         {err && <p style={S.errText}>{err}</p>}
         {ok && <p style={S.okText}>{ok}</p>}
         <button style={{ ...S.primaryBtn, width: "100%", marginTop: 16, opacity: busy ? 0.7 : 1 }} onClick={submit} disabled={busy}>
-          {busy ? <><RefreshCw size={16} className="spin" /> Please wait…</> : mode === "signup" ? "Create account" : "Sign in"}
+          {busy ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : mode === "signup" ? "افتح ملف" : "ادخل يا معلم"}
         </button>
         <button style={S.linkBtn} onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setOk(""); }}>
-          {mode === "signup" ? "Already have an account? Sign in" : "New here? Create an account"}
+          {mode === "signup" ? "عندك حساب؟ ادخل" : "جديد هنا؟ اعمل حساب"}
         </button>
       </div>
     </Center>
@@ -168,15 +188,15 @@ function ProfileScreen({ session, onDone }) {
 
   const save = async () => {
     setErr("");
-    if (!name.trim()) return setErr("Please enter your name.");
-    if (phone.replace(/\D/g, "").length < 7) return setErr("Please enter a valid phone number.");
+    if (!name.trim()) return setErr("الاسم يا باشا… من غير اسم مفيش سندوتش.");
+    if (phone.replace(/\D/g, "").length < 7) return setErr("رقم الموبايل ناقص أو غلط.");
     setBusy(true);
     try {
       const row = { id: session.user.id, name: name.trim(), phone: phone.trim() };
       const { data, error } = await supabase.from("profiles").upsert(row).select().single();
       if (error) throw error;
       onDone(data);
-    } catch (e) { setErr(e.message || "Couldn't save your details."); }
+    } catch (e) { setErr(e.message || "ما حفظناش. جرّب تاني."); }
     finally { setBusy(false); }
   };
 
@@ -184,16 +204,16 @@ function ProfileScreen({ session, onDone }) {
     <Center>
       <div style={S.signCard}>
         <div style={S.brandRow}>
-          <div style={S.logoDot}><ChefHat size={22} strokeWidth={2} /></div>
-          <div><h1 style={S.brandTitle}>One quick step</h1><p style={S.brandSub}>Tell us who to put on the order.</p></div>
+          <Logo size="lg" />
+          <div><h1 style={S.brandTitle} dir="rtl">ثواني يا باشا</h1><p style={S.brandSub} dir="rtl">اسمك على الأوردر… على مسئوليتي</p></div>
         </div>
-        <label style={S.label}>Your name</label>
-        <input style={S.input} value={name} placeholder="e.g. Ahmed Fawzy" onChange={(e) => setName(e.target.value)} autoFocus />
-        <label style={{ ...S.label, marginTop: 14 }}>Phone number</label>
-        <input style={S.input} value={phone} placeholder="e.g. 0100 123 4567" inputMode="tel" onChange={(e) => setPhone(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
+        <label style={S.label}>اسمك</label>
+        <input style={S.input} value={name} placeholder="مثلاً أحمد فوزي" onChange={(e) => setName(e.target.value)} autoFocus />
+        <label style={{ ...S.label, marginTop: 14 }}>الموبايل</label>
+        <input style={S.input} value={phone} placeholder="مثلاً 0100 123 4567" inputMode="tel" onChange={(e) => setPhone(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
         {err && <p style={S.errText}>{err}</p>}
         <button style={{ ...S.primaryBtn, width: "100%", marginTop: 16, opacity: busy ? 0.7 : 1 }} onClick={save} disabled={busy}>
-          {busy ? <><RefreshCw size={16} className="spin" /> Saving…</> : "Save and continue"}
+          {busy ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : "كده رضا"}
         </button>
       </div>
     </Center>
@@ -209,26 +229,48 @@ function ShopView({ narrow, catalog, profile, showToast }) {
   const [myOrder, setMyOrder] = useState(null);
   const [history, setHistory] = useState([]);
   const [submitting, setSubmitting] = useState(false);
+  const [bravo, setBravo] = useState(null);
+  const [payOpen, setPayOpen] = useState(false);
+  const [payQr, setPayQr] = useState(PAY_QR_FALLBACK);
+  const [payLink, setPayLink] = useState("");
+  const bravoTimer = useRef(null);
 
   useEffect(() => { if (!activeCat && catalog[0]) setActiveCat(catalog[0].id); }, [catalog, activeCat]);
 
   const lookup = useMemo(() => {
     const m = {};
-    for (const c of catalog) for (const it of c.items) m[`${c.id}::${it.id}`] = { ...it, catId: c.id, catName: c.name, tiered: c.tiered };
+    for (const c of catalog) for (const it of c.items) m[`${c.id}::${it.id}`] = { ...it, catId: c.id, catName: c.name_ar || c.name, tiered: c.tiered };
     return m;
   }, [catalog]);
 
   const loadOrders = useCallback(async () => {
     const { data, error } = await supabase.from("orders").select("*").eq("user_id", profile.id).order("order_date", { ascending: false });
-    if (error) { showToast("Couldn't load your orders.", "err"); return; }
+    if (error) { showToast("الأوردرات مش راضية تفتح.", "err"); return; }
     setHistory(data || []);
     setMyOrder((data || []).find((o) => o.order_date === date) || null);
   }, [profile.id, date, showToast]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
+  useEffect(() => {
+    loadPayQr().then(setPayQr);
+    loadPayLink().then(setPayLink);
+  }, []);
+
+  const cheer = useCallback((ctx) => {
+    setBravo((prev) => ({ ...pickSituationMeme({ ...ctx, exceptSrc: prev?.src }), id: Date.now() }));
+    if (bravoTimer.current) clearTimeout(bravoTimer.current);
+    bravoTimer.current = setTimeout(() => setBravo(null), 2000);
+  }, []);
+  useEffect(() => () => { if (bravoTimer.current) clearTimeout(bravoTimer.current); }, []);
 
   const ck = (c, i, t) => `${c}::${i}::${t}`;
-  const add = (c, i, t) => setCart((s) => ({ ...s, [ck(c, i, t)]: (s[ck(c, i, t)] || 0) + 1 }));
+  const add = (c, i, t) => {
+    const k = ck(c, i, t);
+    const qty = (cart[k] || 0) + 1;
+    const count = Object.values(cart).reduce((s, n) => s + n, 0) + 1;
+    cheer({ itemId: i, catId: c, qty, count });
+    setCart((s) => ({ ...s, [k]: (s[k] || 0) + 1 }));
+  };
   const dec = (k) => setCart((s) => { const n = (s[k] || 0) - 1; const nx = { ...s }; if (n <= 0) delete nx[k]; else nx[k] = n; return nx; });
   const del = (k) => setCart((s) => { const nx = { ...s }; delete nx[k]; return nx; });
 
@@ -239,6 +281,40 @@ function ShopView({ narrow, catalog, profile, showToast }) {
     const price = Number(it[`price_${tier}`] || 0);
     return { key: k, catId, itemId, tier, tierLabel: TIER_LABELS[tier], name: it.name, nameAr: it.name_ar, catName: it.catName, price, qty };
   }).filter(Boolean), [cart, lookup]);
+
+  const reorder = (order) => {
+    if (order.order_date === date) {
+      showToast("ده أوردر النهارده يا معلم… عدّل من العربية.");
+      setTab("menu");
+      return;
+    }
+    const next = {};
+    let skipped = 0;
+    for (const l of order.items || []) {
+      const catId = l.categoryId || l.catId;
+      const itemId = l.itemId;
+      const tier = l.tier;
+      if (!catId || !itemId || !tier) { skipped += 1; continue; }
+      const it = lookup[`${catId}::${itemId}`];
+      if (!it || it[`price_${tier}`] == null) { skipped += l.qty || 1; continue; }
+      const k = ck(catId, itemId, tier);
+      next[k] = (next[k] || 0) + Number(l.qty || 0);
+    }
+    const added = Object.values(next).reduce((s, n) => s + n, 0);
+    if (!added) {
+      showToast("الأصناف دي مش في المنيو دلوقتي.", "err");
+      return;
+    }
+    setCart(next);
+    setTab("menu");
+    showToast(
+      skipped
+        ? "اتنسخ في العربية… شوية أصناف اختفت من المنيو."
+        : myOrder
+          ? "اتنسخ في العربية. على مسئوليتي هيتضاف على أوردر النهارده."
+          : "اتنسخ في العربية. راجع وعدّل وبعدين على مسئوليتي."
+    );
+  };
   const cartTotal = useMemo(() => cartLines.reduce((s, l) => s + l.price * l.qty, 0), [cartLines]);
   const cartCount = useMemo(() => cartLines.reduce((s, l) => s + l.qty, 0), [cartLines]);
 
@@ -251,7 +327,7 @@ function ShopView({ narrow, catalog, profile, showToast }) {
       if (myOrder) myOrder.items.forEach(stash);
       cartLines.forEach(stash);
       const items = Object.values(merged).map((l) => ({ key: l.key, itemId: l.itemId, categoryId: l.catId, categoryName: l.catName, name: l.name, nameAr: l.nameAr, tier: l.tier, tierLabel: l.tierLabel, price: l.price, qty: l.qty }));
-      const total = items.reduce((s, l) => s + l.price * l.qty, 0);
+      const total = foodOf(items) + DELIVERY_FEE;
       const { error } = await supabase.from("orders").upsert(
         { user_id: profile.id, order_date: date, items, total, updated_at: new Date().toISOString() },
         { onConflict: "user_id,order_date" }
@@ -259,8 +335,9 @@ function ShopView({ narrow, catalog, profile, showToast }) {
       if (error) throw error;
       setCart({});
       await loadOrders();
-      showToast(myOrder ? "Order updated — added to today's order." : "Order placed! You're on the list for today.");
-    } catch (e) { showToast(e.message || "Couldn't save your order.", "err"); }
+      setPayOpen(true);
+      showToast(myOrder ? "اتحدّث الأمر — ضفنا على أوردر النهارده. امسح الكيو آر وادفع." : "تمام التمام يا معلم — امسح الكيو آر وادفع");
+    } catch (e) { showToast(e.message || "الأوردر ما اتحفظش. جرّب تاني.", "err"); }
     finally { setSubmitting(false); }
   };
 
@@ -270,19 +347,23 @@ function ShopView({ narrow, catalog, profile, showToast }) {
 
   return (
     <div style={S.shopWrap}>
-      <div style={S.dateBanner}><span style={S.dateEyebrow}>Ordering for</span><span style={S.dateBig}>{prettyDate(date)}</span></div>
+      <div style={S.dateBanner}><span style={S.dateEyebrow} dir="rtl">مهمة النهارده</span><span style={{ ...S.dateBig, fontFamily: "'Cairo','Fraunces',serif" }} dir="rtl">{prettyDate(date)}</span></div>
       <div style={S.tabRow}>
-        <button style={{ ...S.tabBtn, ...(tab === "menu" ? S.tabActive : {}) }} onClick={() => setTab("menu")}>Menu</button>
-        <button style={{ ...S.tabBtn, ...(tab === "history" ? S.tabActive : {}) }} onClick={() => setTab("history")}>My history {history.length ? `(${history.length})` : ""}</button>
+        <button style={{ ...S.tabBtn, ...(tab === "menu" ? S.tabActive : {}) }} onClick={() => setTab("menu")}>المنيو</button>
+        <button style={{ ...S.tabBtn, ...(tab === "history" ? S.tabActive : {}) }} onClick={() => setTab("history")}>أرشيفي {history.length ? `(${history.length})` : ""}</button>
       </div>
 
       {tab === "history" ? (
-        !history.length ? <div style={S.emptyState}><p style={S.cartEmpty}>No past orders yet. Once you submit an order it'll show up here.</p></div> : (
+        !history.length ? <div style={S.emptyState}><p style={S.cartEmpty} dir="rtl">مفيش أرشيف يا معلم… لسه ما طلبتش</p></div> : (
           <div style={S.historyWrap}>
             {history.map((o) => (
               <div key={o.order_date} style={S.personCard}>
-                <div style={S.personHead}><span style={S.personName}>{prettyDate(o.order_date)}</span><span style={S.personTotal}>{money(o.total)}</span></div>
-                {o.items.map((l) => (<div key={l.key} style={S.personLine}><span>{l.qty}× {l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span style={S.personLinePrice}>{money(l.price * l.qty)}</span></div>))}
+                <div style={S.personHead}><span style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }} dir="rtl">{prettyDate(o.order_date)}{o.order_date === date ? " · النهارده" : ""}</span><span style={S.personTotal}>{money(foodOf(o.items) + DELIVERY_FEE)}</span></div>
+                {o.items.map((l) => (<div key={l.key} style={S.personLine}><span dir="rtl">{l.qty}× {l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span style={S.personLinePrice}>{money(l.price * l.qty)}</span></div>))}
+                <Bill food={foodOf(o.items)} />
+                {o.order_date === date
+                  ? <p style={{ ...S.finePrint, marginBottom: 0 }} dir="rtl">ده أوردر النهارده — عدّل من المنيو والعربية</p>
+                  : <button style={{ ...S.primaryBtn, width: "100%", marginTop: 12 }} onClick={() => reorder(o)}><RotateCcw size={15} /> اطلبه تاني</button>}
               </div>
             ))}
           </div>
@@ -291,13 +372,19 @@ function ShopView({ narrow, catalog, profile, showToast }) {
         <div style={colStyle}>
           <section style={S.menuCol}>
             <div style={S.catTabs}>
-              {catalog.map((c) => (<button key={c.id} style={{ ...S.catTab, ...(c.id === activeCat ? S.catTabActive : {}) }} onClick={() => setActiveCat(c.id)}>{c.name}</button>))}
+              {catalog.map((c) => (<button key={c.id} style={{ ...S.catTab, ...(c.id === activeCat ? S.catTabActive : {}) }} onClick={() => setActiveCat(c.id)}>{c.name_ar || c.name}</button>))}
             </div>
             <div style={S.menuGrid}>
-              {cat?.items.map((it) => (
+              {cat?.items.map((it) => {
+                const a = afeya(it.id);
+                return (
                 <div key={it.id} style={S.menuCard}>
+                  <div style={S.memeFrame}>
+                    <img src={itemImage(it.id)} alt="" style={S.menuImg} onError={onImgError} />
+                    <div style={S.memeBar} dir="rtl">{a.text}</div>
+                  </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={S.menuTop}><span style={S.menuName}>{it.name}</span><span style={S.menuAr} dir="rtl">{it.name_ar}</span></div>
+                    <div style={S.menuTop}><span style={{ ...S.menuName, fontFamily: "'Cairo',sans-serif" }} dir="rtl">{it.name_ar || it.name}</span><span style={S.menuAr}>{it.name_ar ? it.name : ""}</span></div>
                     <div style={S.tierRow}>
                       {tiersOf(it, cat.tiered).map(({ tier, price }) => {
                         const k = ck(cat.id, it.id, tier); const qty = cart[k] || 0;
@@ -314,41 +401,85 @@ function ShopView({ narrow, catalog, profile, showToast }) {
                     </div>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </div>
 
             {myOrder && (
               <div style={S.myOrderBox}>
-                <div style={S.myOrderHead}><Check size={15} /> Your order today</div>
-                {myOrder.items.map((l) => (<div key={l.key} style={S.myOrderLine}><span>{l.qty}× {l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span>{money(l.price * l.qty)}</span></div>))}
-                <div style={S.myOrderTotal}><span>Total</span><span>{money(myOrder.total)}</span></div>
-                <p style={S.finePrint}>Add more above and submit again — it'll be added to this order.</p>
+                <div style={S.myOrderHead}><Check size={15} /> أوردر النهارده</div>
+                {myOrder.items.map((l) => (<div key={l.key} style={S.myOrderLine}><span dir="rtl">{l.qty}× {l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span>{money(l.price * l.qty)}</span></div>))}
+                <Bill food={foodOf(myOrder.items)} />
+                <p style={S.finePrint} dir="rtl">زوّد من فوق واضغط تاني — هيتضاف على أوردر النهارده</p>
+                <button style={{ ...S.ghostBtn, width: "100%", marginTop: 10, justifyContent: "center" }} onClick={() => setPayOpen(true)}>ادفع بإنستاباي</button>
               </div>
             )}
           </section>
 
           <aside style={cartColStyle}>
             <div style={S.cartCard}>
-              <div style={S.cartHead}><ShoppingCart size={18} /><span>Your cart</span>{cartCount > 0 && <span style={S.cartBadge}>{cartCount}</span>}</div>
-              {!cartLines.length ? <p style={S.cartEmpty}>Nothing here yet. Pick a category and add something warm.</p> : (
+              <div style={S.cartHead}><ShoppingCart size={18} /><span dir="rtl">العربية</span>{cartCount > 0 && <span style={S.cartBadge}>{cartCount}</span>}</div>
+              {!cartLines.length ? <p style={S.cartEmpty} dir="rtl">العربية فاضية يا باشا… الجوع كافر</p> : (
                 <>
                   <div style={S.cartLines}>
                     {cartLines.map((l) => (
                       <div key={l.key} style={S.cartLine}>
-                        <div style={{ flex: 1, minWidth: 0 }}><div style={S.cartLineName}>{l.name} <span style={S.tierTag}>{l.tierLabel}</span></div><div style={S.cartLineMeta}>{money(l.price)} each</div></div>
+                        <img src={itemImage(l.itemId)} alt="" style={S.cartThumb} onError={onImgError} />
+                        <div style={{ flex: 1, minWidth: 0 }}><div style={S.cartLineName}>{l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></div><div style={S.cartLineMeta}>{money(l.price)} الواحدة</div></div>
                         <div style={S.stepperSm}><button style={S.stepBtn} onClick={() => dec(l.key)}><Minus size={13} /></button><span style={S.stepQty}>{l.qty}</span><button style={S.stepBtn} onClick={() => add(l.catId, l.itemId, l.tier)}><Plus size={13} /></button></div>
-                        <button style={S.trashBtn} onClick={() => del(l.key)} title="Remove"><Trash2 size={15} /></button>
+                        <button style={S.trashBtn} onClick={() => del(l.key)} title="شيل"><Trash2 size={15} /></button>
                       </div>
                     ))}
                   </div>
-                  <div style={S.cartTotalRow}><span>Total</span><span style={S.cartTotalNum}>{money(cartTotal)}</span></div>
+                  {myOrder
+                    ? (
+                      <>
+                        <div style={S.billGrand} dir="rtl"><span>الأكل الجديد</span><span>{money(cartTotal)}</span></div>
+                        <p style={{ ...S.finePrint, marginTop: 8 }} dir="rtl">التوصيل 5 جنيه مرة واحدة ومتسجل على أوردر النهارده.</p>
+                      </>
+                    )
+                    : <Bill food={cartTotal} />}
                   <button style={{ ...S.primaryBtn, width: "100%", opacity: submitting ? 0.7 : 1 }} onClick={submit} disabled={submitting}>
-                    {submitting ? <><RefreshCw size={16} className="spin" /> Saving…</> : <><Check size={16} /> Submit order</>}
+                    {submitting ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : <><Check size={16} /> على مسئوليتي</>}
                   </button>
                 </>
               )}
             </div>
           </aside>
+        </div>
+      )}
+      {bravo && (
+        <div style={S.bravoScrim} onClick={() => setBravo(null)} role="presentation">
+          <div style={S.bravoCard} className={bravo.shake ? "haram-pop" : "bravo-pop"}>
+            <img src={bravo.src} alt="" style={S.bravoImg} />
+          </div>
+        </div>
+      )}
+      {payOpen && (
+        <div style={S.bravoScrim} onClick={() => setPayOpen(false)} role="presentation">
+          <div style={S.payCardModal} className="bravo-pop" onClick={(e) => e.stopPropagation()} dir="rtl">
+            <Logo size="lg" />
+            <h2 style={{ ...S.brandTitle, marginTop: 12, fontSize: 22 }}>ادفع وإنت مطمن</h2>
+            <p style={S.brandSub}>العربية اتقفلت… امسح كيو آر إنستاباي من الموبايل وسيب الباقي على الله</p>
+            <img src={payQr} alt="" style={S.payQrImg} />
+            {payLink && (
+              <>
+                <a href={payLink} target="_blank" rel="noopener noreferrer" style={{ ...S.primaryBtn, width: "100%", marginTop: 4, textDecoration: "none" }}>افتح لينك إنستاباي</a>
+                <button
+                  type="button"
+                  style={{ ...S.ghostBtn, width: "100%", marginTop: 8, justifyContent: "center" }}
+                  onClick={async () => {
+                    try { await navigator.clipboard.writeText(payLink); showToast("اللينك اتنسخ."); }
+                    catch { showToast("النسخ فشل — انسخه بإيدك.", "err"); }
+                  }}
+                >
+                  <ClipboardCopy size={15} /> انسخ اللينك
+                </button>
+                <p style={{ ...S.finePrint, direction: "ltr", wordBreak: "break-all", textAlign: "center" }}>{payLink}</p>
+              </>
+            )}
+            <button style={{ ...S.primaryBtn, width: "100%", marginTop: 8 }} onClick={() => setPayOpen(false)}>تمام التمام</button>
+          </div>
         </div>
       )}
     </div>
@@ -360,9 +491,20 @@ function AdminView({ narrow, showToast }) {
   const today = todayStr();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [rows, setRows] = useState([]); // joined orders + profile
+  const [rows, setRows] = useState([]);
   const [selectedDate, setSelectedDate] = useState(today);
-  const [mode, setMode] = useState("full");
+  const [mode, setMode] = useState("person");
+  const [payQr, setPayQr] = useState(PAY_QR_FALLBACK);
+  const [payLinkDraft, setPayLinkDraft] = useState("");
+  const [qrBusy, setQrBusy] = useState(false);
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [payEdit, setPayEdit] = useState(false);
+  const qrInput = useRef(null);
+
+  useEffect(() => {
+    loadPayQr().then(setPayQr);
+    loadPayLink().then(setPayLinkDraft);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -375,7 +517,7 @@ function AdminView({ narrow, showToast }) {
       setRows(data || []);
       const dates = [...new Set((data || []).map((r) => r.order_date))].sort().reverse();
       if (dates.length && !dates.includes(selectedDate)) setSelectedDate(dates[0]);
-    } catch (e) { setError(e.message || "Couldn't load orders."); }
+    } catch (e) { setError(e.message || "الأوردرات وقفت في الزحمة."); }
     finally { setLoading(false); }
   }, [selectedDate]);
 
@@ -384,18 +526,20 @@ function AdminView({ narrow, showToast }) {
   const dates = useMemo(() => [...new Set(rows.map((r) => r.order_date))].sort().reverse(), [rows]);
   const dayOrders = useMemo(
     () => rows.filter((r) => r.order_date === selectedDate)
-      .map((r) => ({ ...r, name: r.profiles?.name || "Unknown", phone: r.profiles?.phone || "" }))
+      .map((r) => ({ ...r, name: r.profiles?.name || "مش معروف", phone: r.profiles?.phone || "" }))
       .sort((a, b) => a.name.localeCompare(b.name)),
     [rows, selectedDate]
   );
-  const dayTotal = useMemo(() => dayOrders.reduce((s, o) => s + Number(o.total), 0), [dayOrders]);
+  const dayFood = useMemo(() => dayOrders.reduce((s, o) => s + foodOf(o.items), 0), [dayOrders]);
+  const unpaid = useMemo(() => dayOrders.filter((o) => !o.paid).length, [dayOrders]);
+  const dayDue = dayFood + DELIVERY_FEE * dayOrders.length;
 
   const byCategory = useMemo(() => {
     const cats = {};
     for (const o of dayOrders) for (const l of o.items) {
       const c = (cats[l.categoryName] = cats[l.categoryName] || { name: l.categoryName, lines: {}, subtotal: 0 });
       const lk = `${l.itemId}::${l.tier}`;
-      if (!c.lines[lk]) c.lines[lk] = { name: l.name, tierLabel: l.tierLabel, price: l.price, qty: 0 };
+      if (!c.lines[lk]) c.lines[lk] = { name: l.nameAr || l.name, tierLabel: l.tierLabel, price: l.price, qty: 0 };
       c.lines[lk].qty += l.qty; c.subtotal += l.price * l.qty;
     }
     return Object.values(cats).map((c) => ({ ...c, lines: Object.values(c.lines).sort((a, b) => b.qty - a.qty) }));
@@ -405,67 +549,173 @@ function AdminView({ narrow, showToast }) {
     // optimistic
     setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: next } : r)));
     const { error } = await supabase.from("orders").update({ paid: next }).eq("id", orderId);
-    if (error) { showToast("Couldn't update paid status.", "err"); setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: !next } : r))); }
+    if (error) { showToast("الفلوس ما اتعلّمتش.", "err"); setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: !next } : r))); }
   };
 
   const buildText = () => {
-    let out = `El Shabrawy — office order\n${prettyDate(selectedDate)}\n${"=".repeat(36)}\n\nFULL ORDER FOR THE STORE (by category)\n${"-".repeat(36)}\n`;
+    let out = `هيئة مكافحة الجوع — أوردر المكتب\n${prettyDate(selectedDate)}\n${"=".repeat(36)}\n\nالأوردر الكامل للمحل\n${"-".repeat(36)}\n`;
     byCategory.forEach((c) => { out += `\n${c.name}\n`; c.lines.forEach((l) => (out += `  ${l.qty}× ${l.name} [${l.tierLabel}]  ${money(l.price * l.qty)}\n`)); });
-    out += `\n${"=".repeat(36)}\nPER PERSON (who pays what)\n${"-".repeat(36)}\n`;
-    dayOrders.forEach((o) => { out += `\n${o.name} — ${o.phone}${o.paid ? "  (PAID)" : ""}\n`; o.items.forEach((l) => (out += `  ${l.qty}× ${l.name} [${l.tierLabel}]  ${money(l.price * l.qty)}\n`)); out += `  PAYS: ${money(o.total)}\n`; });
-    out += `\n${"=".repeat(36)}\nPeople: ${dayOrders.length}\nDAY TOTAL: ${money(dayTotal)}\n`;
+    out += `\n${"=".repeat(36)}\nكل واحد وحقه\n${"-".repeat(36)}\n`;
+    dayOrders.forEach((o) => { out += `\n${o.name} — ${o.phone}${o.paid ? "  (دافع)" : ""}\n`; o.items.forEach((l) => (out += `  ${l.qty}× ${l.nameAr || l.name} [${l.tierLabel}]  ${money(l.price * l.qty)}\n`)); out += `  يدفع: ${money(foodOf(o.items) + DELIVERY_FEE)}\n`; });
+    out += `\n${"=".repeat(36)}\nناس: ${dayOrders.length}\nأكل المحل: ${money(dayFood)}\nتوصيل: ${money(DELIVERY_FEE * dayOrders.length)}\nحساب اليوم: ${money(dayDue)}\n`;
     return out;
   };
-  const copyList = async () => { try { await navigator.clipboard.writeText(buildText()); showToast("Compiled order copied."); } catch { showToast("Copy failed — use Export.", "err"); } };
-  const exportList = () => { try { const b = new Blob([buildText()], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `elshabrawy-${selectedDate}.txt`; a.click(); URL.revokeObjectURL(u); showToast("Exported .txt."); } catch { showToast("Export failed — use Copy.", "err"); } };
+  const copyList = async () => { try { await navigator.clipboard.writeText(buildText()); showToast("الأوردر اتنسخ. روح اقراه للمحل."); } catch { showToast("النسخ فشل — جرّب التصدير.", "err"); } };
+  const exportList = () => { try { const b = new Blob([buildText()], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `hayat-mokafhet-elgoo-${selectedDate}.txt`; a.click(); URL.revokeObjectURL(u); showToast("الملف نزل."); } catch { showToast("التصدير فشل — جرّب انسخ.", "err"); } };
 
-  if (loading) return (<div style={S.adminPad}><div style={S.loadPulse}><Layers size={34} strokeWidth={1.5} /></div><p style={S.loadText}>Compiling everyone's orders…</p></div>);
-  if (error) return (<div style={S.adminPad}><p style={S.loadText}>{error}</p><button style={S.primaryBtn} onClick={load}><RefreshCw size={16} /> Try again</button></div>);
+  const onQrFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setQrBusy(true);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      await savePayQr(dataUrl);
+      setPayQr(dataUrl);
+      showToast("الكيو آر اتغيّر. الناس هتشوف الصورة الجديدة.");
+    } catch (err) {
+      showToast(settingsSaveHint(err), "err");
+    } finally { setQrBusy(false); }
+  };
+
+  const saveLink = async () => {
+    setLinkBusy(true);
+    try {
+      const url = normalizePayLink(payLinkDraft);
+      await savePayLink(url);
+      setPayLinkDraft(url);
+      showToast(url ? "اللينك اتحفظ. الناس هيفتحوه بعد على مسئوليتي." : "اللينك اتشال.");
+    } catch (err) {
+      showToast(settingsSaveHint(err), "err");
+    } finally { setLinkBusy(false); }
+  };
+
+  if (loading) return (<div style={S.adminPad}><div style={S.loadPulse}><Layers size={34} strokeWidth={1.5} /></div><p style={S.loadText} dir="rtl">بنلمّ أوردرات العيال…</p></div>);
+  if (error) return (<div style={S.adminPad}><p style={S.loadText}>{error}</p><button style={S.primaryBtn} onClick={load}><RefreshCw size={16} /> جرّب تاني</button></div>);
 
   return (
-    <div style={S.adminWrap}>
-      <div style={S.adminTopRow}><div><span style={S.dateEyebrow}>Admin hub</span><h2 style={S.adminH}>Compiled orders</h2></div><button style={S.ghostBtn} onClick={load}><RefreshCw size={15} /> Refresh</button></div>
+    <div style={S.adminWrap} dir="rtl">
+      <div style={S.adminTopRow}>
+        <div>
+          <span style={S.dateEyebrow}>مكتب المأمور</span>
+          <h2 style={{ ...S.adminH, fontFamily: "'Cairo',sans-serif" }}>شغل النهارده</h2>
+        </div>
+        <button style={S.ghostBtn} onClick={load}><RefreshCw size={15} /> حدّث</button>
+      </div>
+
+      <button type="button" style={S.payFold} onClick={() => setPayEdit((v) => !v)}>
+        <span>
+          <strong>الدفع — كيو آر ولينك إنستاباي</strong>
+          <span style={S.payFoldHint}>اتعدل من هنا براحتك</span>
+        </span>
+        <ChevronDown size={18} style={{ transform: payEdit ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+      </button>
+      {payEdit && (
+        <div style={S.qrBox}>
+          <div style={narrow ? S.payEditStack : S.payEditGrid}>
+            <div>
+              <div style={S.payEditTitle}>الكيو آر</div>
+              <img src={payQr} alt="" style={S.qrPreviewSm} />
+              <input ref={qrInput} type="file" accept="image/*" style={S.hiddenFile} onChange={onQrFile} />
+              <button style={{ ...S.primaryBtn, width: "100%", marginTop: 10, opacity: qrBusy ? 0.7 : 1 }} onClick={() => qrInput.current?.click()} disabled={qrBusy}>
+                {qrBusy ? "ثواني…" : "غيّر الصورة"}
+              </button>
+            </div>
+            <div>
+              <div style={S.payEditTitle}>اللينك المباشر</div>
+              <p style={{ ...S.finePrint, marginTop: 0 }}>حطه وعدّله في أي وقت — يظهر بعد «على مسئوليتي».</p>
+              <input
+                style={{ ...S.input, direction: "ltr", textAlign: "left" }}
+                value={payLinkDraft}
+                placeholder="https://ipn.eg/..."
+                onChange={(e) => setPayLinkDraft(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && saveLink()}
+              />
+              <button style={{ ...S.ghostBtn, width: "100%", marginTop: 10, justifyContent: "center", opacity: linkBusy ? 0.7 : 1 }} onClick={saveLink} disabled={linkBusy}>
+                {linkBusy ? "ثواني…" : "احفظ اللينك"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!dates.length ? (
-        <div style={S.emptyState}><p style={S.cartEmpty}>No orders yet. Once people submit, they'll appear here grouped by date.</p></div>
+        <div style={S.emptyState}><p style={S.cartEmpty}>لسه مفيش أوردرات. أول ما العيال تطلب، هتظهر هنا.</p></div>
       ) : (
         <>
           <div style={S.dateTabs}>
-            {dates.map((d) => (<button key={d} style={{ ...S.dateTab, ...(d === selectedDate ? S.dateTabActive : {}) }} onClick={() => setSelectedDate(d)}>{d === today ? "Today" : prettyDate(d).replace(/,.*/, "")}<span style={S.dateTabDate}>{d}</span></button>))}
+            {dates.map((d) => (
+              <button key={d} style={{ ...S.dateTab, ...(d === selectedDate ? S.dateTabActive : {}) }} onClick={() => setSelectedDate(d)}>
+                {d === today ? "النهارده" : weekdayAr(d)}
+                <span style={S.dateTabDate}>{d}</span>
+              </button>
+            ))}
           </div>
-          <div style={S.adminActions}>
-            <button style={S.primaryBtn} onClick={copyList}><ClipboardCopy size={16} /> Copy full order</button>
-            <button style={S.ghostBtn} onClick={exportList}>Export .txt</button>
-            <span style={S.adminStat}>{dayOrders.length} {dayOrders.length === 1 ? "person" : "people"} · {money(dayTotal)}</span>
+
+          <div style={S.adminStatBar}>
+            <span>{dayOrders.length} {dayOrders.length === 1 ? "واحد طلب" : "ناس طلبوا"}</span>
+            <span>{unpaid ? `${unpaid} لسه ما دفعوش` : "كلهم دفعوا"}</span>
+            <span>المفروض يتجمع {money(dayDue)}</span>
           </div>
-          <div style={S.modeRow}>
-            <button style={{ ...S.modeBtn, ...(mode === "full" ? S.modeActive : {}) }} onClick={() => setMode("full")}><Layers size={15} /> Full order by category</button>
-            <button style={{ ...S.modeBtn, ...(mode === "person" ? S.modeActive : {}) }} onClick={() => setMode("person")}><Users size={15} /> Per person &amp; payment</button>
+
+          <div style={S.adminTabs}>
+            <button style={{ ...S.adminTab, ...(mode === "person" ? S.adminTabActive : {}) }} onClick={() => setMode("person")}>
+              <Users size={16} />
+              <span>الناس اللي طلبت</span>
+              <small style={S.adminTabSub}>الاسم · الموبايل · الحساب</small>
+            </button>
+            <button style={{ ...S.adminTab, ...(mode === "full" ? S.adminTabActive : {}) }} onClick={() => setMode("full")}>
+              <Layers size={16} />
+              <span>أوردر المحل</span>
+              <small style={S.adminTabSub}>تجميعة تتقري للمحل</small>
+            </button>
           </div>
 
           {mode === "full" ? (
             <div style={S.fullWrap}>
+              <div style={S.adminActions}>
+                <button style={S.primaryBtn} onClick={copyList}><ClipboardCopy size={16} /> انسخ للمحل</button>
+                <button style={S.ghostBtn} onClick={exportList}>نزّل ملف</button>
+              </div>
               {byCategory.map((c) => (
                 <div key={c.name} style={S.catBlock}>
-                  <div style={S.catBlockHead}><span>{c.name}</span><span style={S.catBlockSub}>{money(c.subtotal)}</span></div>
-                  {c.lines.map((l, i) => (<div key={i} style={S.tallyLineLight}><span style={S.tallyQtyDark}>{l.qty}×</span><span style={{ flex: 1 }}>{l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span style={S.personLinePrice}>{money(l.price * l.qty)}</span></div>))}
+                  <div style={{ ...S.catBlockHead, fontFamily: "'Cairo',sans-serif" }}><span>{c.name}</span><span style={S.catBlockSub}>{money(c.subtotal)}</span></div>
+                  {c.lines.map((l, i) => (
+                    <div key={i} style={S.tallyLineLight}>
+                      <span style={S.tallyQtyDark}>{l.qty}×</span>
+                      <span style={{ flex: 1, fontFamily: "'Cairo',sans-serif" }}>{l.name} <span style={S.tierTag}>{l.tierLabel}</span></span>
+                      <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+                    </div>
+                  ))}
                 </div>
               ))}
-              <div style={S.grandTotal}><span>Day total for the store</span><span>{money(dayTotal)}</span></div>
+              <div style={{ ...S.grandTotal, fontFamily: "'Cairo',sans-serif" }}><span>أكل المحل</span><span>{money(dayFood)}</span></div>
+              <p style={S.finePrint}>التوصيل 5 جنيه على كل واحد — مش جزء من أوردر المحل.</p>
             </div>
           ) : (
             <div style={narrow ? { ...S.personGrid, gridTemplateColumns: "1fr" } : S.personGrid}>
               {dayOrders.map((o) => (
                 <div key={o.id} style={{ ...S.payCard, ...(o.paid ? S.payCardPaid : {}) }}>
                   <div style={S.payHead}>
-                    <div><div style={S.personName}>{o.name}</div><div style={S.payPhone}><Phone size={11} /> {o.phone}</div></div>
-                    <div style={S.payAmount}>{money(o.total)}</div>
+                    <div>
+                      <div style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }}>{o.name}</div>
+                      {o.phone
+                        ? <a href={`tel:${o.phone.replace(/\s/g, "")}`} style={S.payPhoneLink} dir="ltr"><Phone size={12} /> {o.phone}</a>
+                        : <div style={S.payPhone}>مفيش موبايل</div>}
+                    </div>
+                    <div style={S.payAmount}>{money(foodOf(o.items) + DELIVERY_FEE)}</div>
                   </div>
-                  {o.items.map((l) => (<div key={l.key} style={S.personLine}><span>{l.qty}× {l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span style={S.personLinePrice}>{money(l.price * l.qty)}</span></div>))}
+                  {o.items.map((l) => (
+                    <div key={l.key} style={S.personLine}>
+                      <span>{l.qty}× {l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></span>
+                      <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+                    </div>
+                  ))}
+                  <Bill food={foodOf(o.items)} />
                   <div style={S.payFoot}>
-                    <span style={{ fontWeight: 700, color: "#8a7f70" }}>Pays {money(o.total)}</span>
-                    <button style={{ ...S.paidToggle, ...(o.paid ? S.paidToggleOn : {}) }} onClick={() => togglePaid(o.id, !o.paid)}>
-                      <Check size={13} /> {o.paid ? "Paid" : "Mark paid"}
+                    <span style={{ fontWeight: 700, color: "#8a7f70", fontFamily: "'Cairo',sans-serif" }}>{o.paid ? "تمام، دافع" : "لسه ما دفعش"}</span>
+                    <button style={{ ...S.paidToggle, fontFamily: "'Cairo',sans-serif", ...(o.paid ? S.paidToggleOn : {}) }} onClick={() => togglePaid(o.id, !o.paid)}>
+                      <Check size={13} /> {o.paid ? "دافع" : "علّم دافع"}
                     </button>
                   </div>
                 </div>

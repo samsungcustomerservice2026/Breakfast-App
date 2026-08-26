@@ -5,7 +5,7 @@ const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 export const configError =
   !url || !anon || url.includes("YOUR-PROJECT")
-    ? "Supabase isn't configured. Copy .env.example to .env and add your project URL and anon key, then restart the dev server."
+    ? "سوبابيس مش متظبط. انسخ .env.example لـ .env وحط اللينك والمفتاح، وبعدين شغّل السيرفر تاني."
     : null;
 
 // Create the client even if config is missing so imports don't crash;
