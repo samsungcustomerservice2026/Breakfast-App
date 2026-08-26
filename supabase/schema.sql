@@ -36,7 +36,7 @@ create table if not exists public.menu_items (
   sort         int not null default 0
 );
 
--- ---------- orders: one row per person per day ----------
+-- ---------- orders: many per person per day ----------
 create table if not exists public.orders (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
@@ -45,11 +45,12 @@ create table if not exists public.orders (
   items       jsonb not null default '[]'::jsonb,
   total       numeric not null default 0,
   paid        boolean not null default false,
-  updated_at  timestamptz not null default now(),
-  unique (user_id, order_date)   -- enforces "one order per person per day" (upsert target)
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
 );
 
 create index if not exists orders_date_idx on public.orders (order_date);
+create index if not exists orders_user_date_idx on public.orders (user_id, order_date);
 
 -- ============================================================
 -- Row Level Security

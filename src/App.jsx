@@ -5,13 +5,15 @@ import { S, globalCss } from "./styles.js";
 import { itemImage, onImgError } from "./itemImages.js";
 import { afeya } from "./afeyat.js";
 import { pickSituationMeme } from "./memes.js";
+import { expandOrders, withNewBatch, setBatchPaid, parseOrderId } from "./orders.js";
 import { loadPayQr, savePayQr, loadPayLink, savePayLink, fileToDataUrl, normalizePayLink, settingsSaveHint, PAY_QR_FALLBACK } from "./settings.js";
 
 const TIER_LABELS = { shami: "شامي", balady: "بلدي", sm: "صغير", md: "وسط", lg: "كبير" };
 const DELIVERY_FEE = 5;
-const Logo = ({ size = "sm" }) => (
-  <img src="/logo.png" alt="" style={size === "lg" ? S.logoImgLg : S.logoImgSm} />
-);
+const Logo = ({ size = "sm" }) => {
+  const st = size === "xl" ? S.logoImgXl : size === "lg" ? S.logoImgLg : S.logoImgSm;
+  return <img src="/logo.png" alt="هيئة مكافحة الجوع" style={st} />;
+};
 const money = (n) => `${Number(n || 0).toFixed(0)} جنيه`;
 const foodOf = (items) => (items || []).reduce((s, l) => s + Number(l.price || 0) * Number(l.qty || 0), 0);
 const Bill = ({ food }) => (
@@ -21,6 +23,36 @@ const Bill = ({ food }) => (
     <div style={S.billGrand}><span>الحساب</span><span>{money(Number(food || 0) + DELIVERY_FEE)}</span></div>
   </div>
 );
+const orderStamp = (o) => o.created_at || o.updated_at || o.id;
+const sameDayOrders = (list, d) => (list || []).filter((o) => o.order_date === d).slice().sort((a, b) => String(orderStamp(a)).localeCompare(String(orderStamp(b))));
+const orderNo = (list, o) => sameDayOrders(list, o.order_date).findIndex((x) => x.id === o.id) + 1;
+const orderTitle = (list, o, today) => {
+  const n = orderNo(list, o);
+  const count = sameDayOrders(list, o.order_date).length;
+  const day = o.order_date === today ? "النهارده" : prettyDate(o.order_date);
+  return count > 1 ? `${day} · أوردر ${n}` : day;
+};
+function OrderBlock({ order, title, onReorder, onPay, tone }) {
+  return (
+    <div style={tone === "today" ? S.myOrderBox : S.personCard} dir="rtl">
+      <div style={tone === "today" ? S.myOrderHead : S.personHead}>
+        {tone === "today" ? <><Check size={15} /> {title}</> : <span style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }}>{title}</span>}
+        {tone !== "today" && <span style={S.personTotal}>{money(foodOf(order.items) + DELIVERY_FEE)}</span>}
+      </div>
+      {order.items.map((l) => (
+        <div key={l.key} style={tone === "today" ? S.myOrderLine : S.personLine}>
+          <span>{l.qty}× {l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></span>
+          <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+        </div>
+      ))}
+      <Bill food={foodOf(order.items)} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+        {onReorder && <button style={{ ...S.primaryBtn, width: "100%" }} onClick={() => onReorder(order)}><RotateCcw size={15} /> اطلبه تاني</button>}
+        {onPay && <button style={{ ...S.ghostBtn, width: "100%", justifyContent: "center" }} onClick={onPay}>ادفع بإنستاباي</button>}
+      </div>
+    </div>
+  );
+}
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const prettyDate = (d) => {
   try { return new Date(d + "T00:00:00").toLocaleDateString("ar-EG", { weekday: "long", day: "numeric", month: "long" }); }
@@ -51,6 +83,7 @@ export default function App() {
   const [catalog, setCatalog] = useState([]);
   const [view, setView] = useState("shop");
   const [toast, setToast] = useState(null);
+  const [loginBravo, setLoginBravo] = useState(false);
   const narrow = useIsNarrow();
 
   const showToast = useCallback((msg, tone = "ok") => { setToast({ msg, tone }); setTimeout(() => setToast(null), 3400); }, []);
@@ -96,12 +129,25 @@ export default function App() {
     setCatalog(cats.map((c) => ({ ...c, items: byCat[c.id] || [] })));
   }, []);
 
-  const signOut = async () => { await supabase.auth.signOut(); setView("shop"); };
+  const signOut = async () => { sessionStorage.removeItem("hayat_bravo"); await supabase.auth.signOut(); setView("shop"); };
+
+  useEffect(() => {
+    if (phase === "ready" || phase === "needsProfile") {
+      if (sessionStorage.getItem("hayat_bravo") === "1") {
+        sessionStorage.removeItem("hayat_bravo");
+        setLoginBravo(true);
+      }
+    }
+  }, [phase]);
+
+  const bravoPop = loginBravo ? (
+    <MemePop src="/memes/auth-bravo.jpg" caption="برافو عليك" onClose={() => setLoginBravo(false)} />
+  ) : null;
 
   if (phase === "error") return (<Center><p style={{ ...S.loadText, maxWidth: 360 }}>{errMsg}</p></Center>);
   if (phase === "loading") return (<Center><img src="/logo.png" alt="" style={{ ...S.logoImgLg, animation: "floaty 2.2s ease-in-out infinite" }} /><p style={S.loadText} dir="rtl">ثواني يا معلم… الهيئة بتسخّن</p></Center>);
-  if (phase === "auth") return (<AuthScreen showToast={showToast} />);
-  if (phase === "needsProfile") return (<ProfileScreen session={session} onDone={(p) => { setProfile(p); loadMenu().then(() => setPhase("ready")); }} />);
+  if (phase === "auth") return (<AuthScreen />);
+  if (phase === "needsProfile") return (<><ProfileScreen session={session} onDone={(p) => { setProfile(p); loadMenu().then(() => setPhase("ready")); }} />{bravoPop}</>);
 
   return (
     <div style={S.app}>
@@ -121,12 +167,26 @@ export default function App() {
         : <AdminView {...{ narrow, showToast }} />}
 
       {toast && (<div style={{ ...S.toast, background: toast.tone === "err" ? "#b23a2f" : "#2f6b4f" }}>{toast.tone === "err" ? "!" : <Check size={16} />} {toast.msg}</div>)}
+      {bravoPop}
       <style>{globalCss}</style>
     </div>
   );
 }
 
 function Center({ children }) { return (<div style={S.screenCenter}>{children}<style>{globalCss}</style></div>); }
+
+function MemePop({ src, caption, onClose, actionLabel = "تمام", onAction }) {
+  const go = onAction || onClose;
+  return (
+    <div style={S.bravoScrim} onClick={onClose} role="presentation">
+      <div style={S.authMemeCard} className="bravo-pop" onClick={(e) => e.stopPropagation()} dir="rtl">
+        <img src={src} alt="" style={S.bravoImg} />
+        {caption && <p style={S.authMemeCap}>{caption}</p>}
+        <button style={{ ...S.primaryBtn, width: "100%" }} onClick={go}>{actionLabel}</button>
+      </div>
+    </div>
+  );
+}
 
 /* ─────────────── Auth ─────────────── */
 function AuthScreen() {
@@ -136,9 +196,10 @@ function AuthScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
+  const [noAccount, setNoAccount] = useState(false);
 
   const submit = async () => {
-    setErr(""); setOk("");
+    setErr(""); setOk(""); setNoAccount(false);
     if (!email.trim() || pw.length < 6) return setErr("إيميل وباسورد من 6 حروف… مش أصعب من كده.");
     setBusy(true);
     try {
@@ -149,7 +210,15 @@ function AuthScreen() {
         setMode("signin");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
-        if (error) throw error;
+        if (error) {
+          const blob = `${error.message || ""} ${error.code || ""}`.toLowerCase();
+          if (blob.includes("invalid") || blob.includes("credential") || error.status === 400) {
+            setNoAccount(true);
+            return;
+          }
+          throw error;
+        }
+        sessionStorage.setItem("hayat_bravo", "1");
       }
     } catch (e) { setErr(e.message || "ما نفعش يا معلم. جرّب تاني."); }
     finally { setBusy(false); }
@@ -159,8 +228,11 @@ function AuthScreen() {
     <Center>
       <div style={S.signCard}>
         <div style={S.brandRow}>
-          <Logo size="lg" />
-          <div><h1 style={S.brandTitle} dir="rtl">هيئة مكافحة الجوع</h1><p style={S.brandSub} dir="rtl">الجوع كافر — والفطار قبل التسعة</p></div>
+          <Logo size="xl" />
+          <div>
+            <h1 style={S.brandTitle} dir="rtl">هيئة مكافحة الجوع</h1>
+            <p style={S.brandSub} dir="rtl">الجوع كافر — الحق اطلب الفطار قبل الساعة 10</p>
+          </div>
         </div>
         <label style={S.label}>الإيميل</label>
         <input style={S.input} type="email" value={email} placeholder="الإيميل بتاع الشغل" onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
@@ -171,10 +243,24 @@ function AuthScreen() {
         <button style={{ ...S.primaryBtn, width: "100%", marginTop: 16, opacity: busy ? 0.7 : 1 }} onClick={submit} disabled={busy}>
           {busy ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : mode === "signup" ? "افتح ملف" : "ادخل يا معلم"}
         </button>
-        <button style={S.linkBtn} onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setOk(""); }}>
-          {mode === "signup" ? "عندك حساب؟ ادخل" : "جديد هنا؟ اعمل حساب"}
-        </button>
+        {mode === "signup" ? (
+          <button style={S.linkBtn} onClick={() => { setMode("signin"); setErr(""); setOk(""); }}>عندك حساب؟ ادخل</button>
+        ) : (
+          <p style={S.signupHint} dir="rtl">
+            جديد هنا؟{" "}
+            <button style={S.signupLink} onClick={() => { setMode("signup"); setErr(""); setOk(""); }}>اعمل حساب</button>
+          </p>
+        )}
       </div>
+      {noAccount && (
+        <MemePop
+          src="/memes/auth-no-account.jpg"
+          caption="باعم مش لما تعمل اكونت الأول"
+          actionLabel="يلا نعمل حساب"
+          onClose={() => setNoAccount(false)}
+          onAction={() => { setNoAccount(false); setMode("signup"); setErr(""); }}
+        />
+      )}
     </Center>
   );
 }
@@ -204,7 +290,7 @@ function ProfileScreen({ session, onDone }) {
     <Center>
       <div style={S.signCard}>
         <div style={S.brandRow}>
-          <Logo size="lg" />
+          <Logo size="xl" />
           <div><h1 style={S.brandTitle} dir="rtl">ثواني يا باشا</h1><p style={S.brandSub} dir="rtl">اسمك على الأوردر… على مسئوليتي</p></div>
         </div>
         <label style={S.label}>اسمك</label>
@@ -226,7 +312,6 @@ function ShopView({ narrow, catalog, profile, showToast }) {
   const [activeCat, setActiveCat] = useState(catalog[0]?.id);
   const [tab, setTab] = useState("menu");
   const [cart, setCart] = useState({}); // "catId::itemId::tier" -> qty
-  const [myOrder, setMyOrder] = useState(null);
   const [history, setHistory] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [bravo, setBravo] = useState(null);
@@ -244,11 +329,10 @@ function ShopView({ narrow, catalog, profile, showToast }) {
   }, [catalog]);
 
   const loadOrders = useCallback(async () => {
-    const { data, error } = await supabase.from("orders").select("*").eq("user_id", profile.id).order("order_date", { ascending: false });
+    const { data, error } = await supabase.from("orders").select("*").eq("user_id", profile.id).order("order_date", { ascending: false }).order("updated_at", { ascending: false });
     if (error) { showToast("الأوردرات مش راضية تفتح.", "err"); return; }
-    setHistory(data || []);
-    setMyOrder((data || []).find((o) => o.order_date === date) || null);
-  }, [profile.id, date, showToast]);
+    setHistory(expandOrders(data || []));
+  }, [profile.id, showToast]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => {
@@ -282,12 +366,18 @@ function ShopView({ narrow, catalog, profile, showToast }) {
     return { key: k, catId, itemId, tier, tierLabel: TIER_LABELS[tier], name: it.name, nameAr: it.name_ar, catName: it.catName, price, qty };
   }).filter(Boolean), [cart, lookup]);
 
-  const reorder = (order) => {
-    if (order.order_date === date) {
-      showToast("ده أوردر النهارده يا معلم… عدّل من العربية.");
-      setTab("menu");
-      return;
+  const todayOrders = useMemo(() => sameDayOrders(history, date).slice().reverse(), [history, date]);
+  const historyGroups = useMemo(() => {
+    const groups = [];
+    for (const o of history) {
+      const last = groups[groups.length - 1];
+      if (last && last.date === o.order_date) last.orders.push(o);
+      else groups.push({ date: o.order_date, orders: [o] });
     }
+    return groups;
+  }, [history]);
+
+  const reorder = (order) => {
     const next = {};
     let skipped = 0;
     for (const l of order.items || []) {
@@ -307,13 +397,9 @@ function ShopView({ narrow, catalog, profile, showToast }) {
     }
     setCart(next);
     setTab("menu");
-    showToast(
-      skipped
-        ? "اتنسخ في العربية… شوية أصناف اختفت من المنيو."
-        : myOrder
-          ? "اتنسخ في العربية. على مسئوليتي هيتضاف على أوردر النهارده."
-          : "اتنسخ في العربية. راجع وعدّل وبعدين على مسئوليتي."
-    );
+    showToast(skipped
+      ? "اتنسخ في العربية… شوية أصناف اختفت من المنيو."
+      : "اتنسخ في العربية. راجع وعدّل وبعدين على مسئوليتي — هيتسجل أوردر جديد.");
   };
   const cartTotal = useMemo(() => cartLines.reduce((s, l) => s + l.price * l.qty, 0), [cartLines]);
   const cartCount = useMemo(() => cartLines.reduce((s, l) => s + l.qty, 0), [cartLines]);
@@ -322,21 +408,23 @@ function ShopView({ narrow, catalog, profile, showToast }) {
     if (!cartCount) return;
     setSubmitting(true);
     try {
-      const merged = {};
-      const stash = (l) => { const k = l.key || ck(l.catId, l.itemId, l.tier); if (!merged[k]) merged[k] = { ...l, key: k, qty: 0 }; merged[k].qty += l.qty; };
-      if (myOrder) myOrder.items.forEach(stash);
-      cartLines.forEach(stash);
-      const items = Object.values(merged).map((l) => ({ key: l.key, itemId: l.itemId, categoryId: l.catId, categoryName: l.catName, name: l.name, nameAr: l.nameAr, tier: l.tier, tierLabel: l.tierLabel, price: l.price, qty: l.qty }));
+      const items = cartLines.map((l) => ({ key: l.key, itemId: l.itemId, categoryId: l.catId, categoryName: l.catName, name: l.name, nameAr: l.nameAr, tier: l.tier, tierLabel: l.tierLabel, price: l.price, qty: l.qty }));
       const total = foodOf(items) + DELIVERY_FEE;
-      const { error } = await supabase.from("orders").upsert(
-        { user_id: profile.id, order_date: date, items, total, updated_at: new Date().toISOString() },
-        { onConflict: "user_id,order_date" }
-      );
-      if (error) throw error;
+      const payload = { user_id: profile.id, order_date: date, items, total, updated_at: new Date().toISOString() };
+      const { error } = await supabase.from("orders").insert(payload);
+      if (error) {
+        const dup = error.code === "23505" || /duplicate|unique/i.test(error.message || "");
+        if (!dup) throw error;
+        const { data: existing, error: findErr } = await supabase.from("orders").select("*").eq("user_id", profile.id).eq("order_date", date).maybeSingle();
+        if (findErr || !existing) throw error;
+        const patch = withNewBatch(existing, items, total);
+        const { error: upErr } = await supabase.from("orders").update(patch).eq("id", existing.id);
+        if (upErr) throw upErr;
+      }
       setCart({});
       await loadOrders();
       setPayOpen(true);
-      showToast(myOrder ? "اتحدّث الأمر — ضفنا على أوردر النهارده. امسح الكيو آر وادفع." : "تمام التمام يا معلم — امسح الكيو آر وادفع");
+      showToast("أوردر جديد اتقفل. امسح الكيو آر وادفع.");
     } catch (e) { showToast(e.message || "الأوردر ما اتحفظش. جرّب تاني.", "err"); }
     finally { setSubmitting(false); }
   };
@@ -356,14 +444,18 @@ function ShopView({ narrow, catalog, profile, showToast }) {
       {tab === "history" ? (
         !history.length ? <div style={S.emptyState}><p style={S.cartEmpty} dir="rtl">مفيش أرشيف يا معلم… لسه ما طلبتش</p></div> : (
           <div style={S.historyWrap}>
-            {history.map((o) => (
-              <div key={o.order_date} style={S.personCard}>
-                <div style={S.personHead}><span style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }} dir="rtl">{prettyDate(o.order_date)}{o.order_date === date ? " · النهارده" : ""}</span><span style={S.personTotal}>{money(foodOf(o.items) + DELIVERY_FEE)}</span></div>
-                {o.items.map((l) => (<div key={l.key} style={S.personLine}><span dir="rtl">{l.qty}× {l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span style={S.personLinePrice}>{money(l.price * l.qty)}</span></div>))}
-                <Bill food={foodOf(o.items)} />
-                {o.order_date === date
-                  ? <p style={{ ...S.finePrint, marginBottom: 0 }} dir="rtl">ده أوردر النهارده — عدّل من المنيو والعربية</p>
-                  : <button style={{ ...S.primaryBtn, width: "100%", marginTop: 12 }} onClick={() => reorder(o)}><RotateCcw size={15} /> اطلبه تاني</button>}
+            {historyGroups.map((g) => (
+              <div key={g.date} style={{ display: "grid", gap: 12 }}>
+                <div style={S.dateEyebrow} dir="rtl">{g.date === date ? "أوردرات النهارده" : prettyDate(g.date)}</div>
+                {g.orders.map((o) => (
+                  <OrderBlock
+                    key={o.id}
+                    order={o}
+                    title={g.orders.length > 1 ? `أوردر ${orderNo(history, o)}` : "الأوردر"}
+                    onReorder={reorder}
+                    onPay={g.date === date ? () => setPayOpen(true) : undefined}
+                  />
+                ))}
               </div>
             ))}
           </div>
@@ -405,13 +497,19 @@ function ShopView({ narrow, catalog, profile, showToast }) {
               })}
             </div>
 
-            {myOrder && (
-              <div style={S.myOrderBox}>
-                <div style={S.myOrderHead}><Check size={15} /> أوردر النهارده</div>
-                {myOrder.items.map((l) => (<div key={l.key} style={S.myOrderLine}><span dir="rtl">{l.qty}× {l.nameAr || l.name} <span style={S.tierTag}>{l.tierLabel}</span></span><span>{money(l.price * l.qty)}</span></div>))}
-                <Bill food={foodOf(myOrder.items)} />
-                <p style={S.finePrint} dir="rtl">زوّد من فوق واضغط تاني — هيتضاف على أوردر النهارده</p>
-                <button style={{ ...S.ghostBtn, width: "100%", marginTop: 10, justifyContent: "center" }} onClick={() => setPayOpen(true)}>ادفع بإنستاباي</button>
+            {todayOrders.length > 0 && (
+              <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
+                {todayOrders.map((o) => (
+                  <OrderBlock
+                    key={o.id}
+                    order={o}
+                    title={todayOrders.length > 1 ? `أوردر ${orderNo(history, o)} اتقفل` : "أوردر اتقفل"}
+                    onReorder={reorder}
+                    onPay={() => setPayOpen(true)}
+                    tone="today"
+                  />
+                ))}
+                <p style={S.finePrint} dir="rtl">عرّب تاني واضغط على مسئوليتي — هيتسجل أوردر جديد لوحده، مش هيتضاف على اللي فات.</p>
               </div>
             )}
           </section>
@@ -431,14 +529,7 @@ function ShopView({ narrow, catalog, profile, showToast }) {
                       </div>
                     ))}
                   </div>
-                  {myOrder
-                    ? (
-                      <>
-                        <div style={S.billGrand} dir="rtl"><span>الأكل الجديد</span><span>{money(cartTotal)}</span></div>
-                        <p style={{ ...S.finePrint, marginTop: 8 }} dir="rtl">التوصيل 5 جنيه مرة واحدة ومتسجل على أوردر النهارده.</p>
-                      </>
-                    )
-                    : <Bill food={cartTotal} />}
+                  <Bill food={cartTotal} />
                   <button style={{ ...S.primaryBtn, width: "100%", opacity: submitting ? 0.7 : 1 }} onClick={submit} disabled={submitting}>
                     {submitting ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : <><Check size={16} /> على مسئوليتي</>}
                   </button>
@@ -511,10 +602,11 @@ function AdminView({ narrow, showToast }) {
     try {
       const { data, error } = await supabase
         .from("orders")
-        .select("id,user_id,order_date,items,total,paid,profiles(name,phone)")
-        .order("order_date", { ascending: false });
+        .select("id,user_id,order_date,items,total,paid,updated_at,profiles(name,phone)")
+        .order("order_date", { ascending: false })
+        .order("updated_at", { ascending: true });
       if (error) throw error;
-      setRows(data || []);
+      setRows(expandOrders(data || []));
       const dates = [...new Set((data || []).map((r) => r.order_date))].sort().reverse();
       if (dates.length && !dates.includes(selectedDate)) setSelectedDate(dates[0]);
     } catch (e) { setError(e.message || "الأوردرات وقفت في الزحمة."); }
@@ -527,7 +619,7 @@ function AdminView({ narrow, showToast }) {
   const dayOrders = useMemo(
     () => rows.filter((r) => r.order_date === selectedDate)
       .map((r) => ({ ...r, name: r.profiles?.name || "مش معروف", phone: r.profiles?.phone || "" }))
-      .sort((a, b) => a.name.localeCompare(b.name)),
+      .sort((a, b) => a.name.localeCompare(b.name, "ar") || String(orderStamp(a)).localeCompare(String(orderStamp(b)))),
     [rows, selectedDate]
   );
   const dayFood = useMemo(() => dayOrders.reduce((s, o) => s + foodOf(o.items), 0), [dayOrders]);
@@ -546,9 +638,19 @@ function AdminView({ narrow, showToast }) {
   }, [dayOrders]);
 
   const togglePaid = async (orderId, next) => {
-    // optimistic
     setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: next } : r)));
-    const { error } = await supabase.from("orders").update({ paid: next }).eq("id", orderId);
+    const { parentId, batchId } = parseOrderId(orderId);
+    let error;
+    if (!batchId) {
+      ({ error } = await supabase.from("orders").update({ paid: next }).eq("id", parentId));
+    } else {
+      const { data, error: readErr } = await supabase.from("orders").select("items").eq("id", parentId).single();
+      if (readErr) error = readErr;
+      else {
+        const patch = setBatchPaid(data.items, batchId, next);
+        ({ error } = await supabase.from("orders").update(patch).eq("id", parentId));
+      }
+    }
     if (error) { showToast("الفلوس ما اتعلّمتش.", "err"); setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: !next } : r))); }
   };
 
@@ -653,7 +755,7 @@ function AdminView({ narrow, showToast }) {
           </div>
 
           <div style={S.adminStatBar}>
-            <span>{dayOrders.length} {dayOrders.length === 1 ? "واحد طلب" : "ناس طلبوا"}</span>
+            <span>{dayOrders.length} {dayOrders.length === 1 ? "أوردر" : "أوردرات"}</span>
             <span>{unpaid ? `${unpaid} لسه ما دفعوش` : "كلهم دفعوا"}</span>
             <span>المفروض يتجمع {money(dayDue)}</span>
           </div>
@@ -690,7 +792,7 @@ function AdminView({ narrow, showToast }) {
                 </div>
               ))}
               <div style={{ ...S.grandTotal, fontFamily: "'Cairo',sans-serif" }}><span>أكل المحل</span><span>{money(dayFood)}</span></div>
-              <p style={S.finePrint}>التوصيل 5 جنيه على كل واحد — مش جزء من أوردر المحل.</p>
+              <p style={S.finePrint}>التوصيل 5 جنيه على كل أوردر — مش جزء من أوردر المحل.</p>
             </div>
           ) : (
             <div style={narrow ? { ...S.personGrid, gridTemplateColumns: "1fr" } : S.personGrid}>
@@ -698,7 +800,9 @@ function AdminView({ narrow, showToast }) {
                 <div key={o.id} style={{ ...S.payCard, ...(o.paid ? S.payCardPaid : {}) }}>
                   <div style={S.payHead}>
                     <div>
-                      <div style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }}>{o.name}</div>
+                      <div style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }}>
+                        {o.name}{dayOrders.filter((x) => x.user_id === o.user_id).length > 1 ? ` · أوردر ${orderNo(dayOrders.filter((x) => x.user_id === o.user_id), o)}` : ""}
+                      </div>
                       {o.phone
                         ? <a href={`tel:${o.phone.replace(/\s/g, "")}`} style={S.payPhoneLink} dir="ltr"><Phone size={12} /> {o.phone}</a>
                         : <div style={S.payPhone}>مفيش موبايل</div>}
