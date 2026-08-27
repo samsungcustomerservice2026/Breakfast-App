@@ -6,6 +6,7 @@ export const MEMES_BUCKET = "memes";
 export const MENU_BUCKET = "menu";
 export const LOGO_PATH = "logo.png";
 export const MEDIA_REV_KEY = "media_rev";
+export const LOGO_FILE_KEY = "logo_file";
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|jfif|avif)$/i;
 
@@ -58,8 +59,9 @@ export async function listImageUrls(bucket) {
 }
 
 export async function resolveLogoSrc(rev) {
-  if (rev) return publicObject(LOGO_BUCKET, LOGO_PATH, rev);
-  return "/logo.png?v=fit";
+  const v = rev || currentRev || String(Date.now());
+  if (import.meta.env.VITE_SUPABASE_URL) return publicObject(LOGO_BUCKET, LOGO_PATH, v);
+  return `/logo.png?v=${v}`;
 }
 
 export async function uploadAsset(path, file, bucket = LOGO_BUCKET) {
@@ -71,7 +73,7 @@ export async function uploadAsset(path, file, bucket = LOGO_BUCKET) {
   const { error } = await supabase.storage.from(bucket).upload(clean, file, {
     upsert: true,
     contentType: file.type || "image/png",
-    cacheControl: "3600",
+    cacheControl: "0",
   });
   if (error) throw error;
   return clean;

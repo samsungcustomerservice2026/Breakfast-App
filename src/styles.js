@@ -3,7 +3,7 @@ export const ink = "#2b2320", cream = "#fbf6ec", paper = "#fffdf8",
   muted = "#8a7f70", yolk = "#f2b134", green = "#2f6b4f";
 
 export const globalCss = `
-  html,body,#root{height:100%;width:100%;max-width:100%;overflow-x:hidden;}
+  html,body,#root{min-height:100%;width:100%;max-width:100%;overflow-x:clip;}
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   @keyframes spin{to{transform:rotate(360deg);}}
   .spin{animation:spin .9s linear infinite;}
@@ -20,18 +20,22 @@ export const globalCss = `
   .catRail::-webkit-scrollbar{display:none;}
   .catRail{scrollbar-width:none;-webkit-overflow-scrolling:touch;}
   @media (max-height: 700px){.pay-qr{max-width:140px!important;margin-top:4px!important;margin-bottom:4px!important;}}
+  .auth-logo{width:100%!important;max-width:100%;height:auto;margin:0 auto 8px!important;}
+  @media (max-height: 620px){.auth-logo{max-height:150px;object-fit:contain;}}
 `;
 
 export const S = {
   app: { fontFamily: "'DM Sans',ui-sans-serif,system-ui,sans-serif", background: cream, color: ink, minHeight: "100dvh" },
-  screenCenter: { fontFamily: "'DM Sans',ui-sans-serif,system-ui,sans-serif", minHeight: "100dvh", width: "100%", maxWidth: "100%", boxSizing: "border-box", background: cream, color: ink, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 14, padding: "16px 14px calc(24px + env(safe-area-inset-bottom))", overflowY: "auto", overflowX: "hidden" },
+  screenCenter: { fontFamily: "'Cairo','DM Sans',ui-sans-serif,system-ui,sans-serif", minHeight: "100dvh", width: "100%", maxWidth: "100%", boxSizing: "border-box", background: "#F4F4F4", color: ink, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0, padding: "16px 14px calc(20px + env(safe-area-inset-bottom))", overflowY: "auto", overflowX: "hidden" },
+  authStack: { width: "min(430px, 100%)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0 },
   loadPulse: { color: clay, animation: "floaty 2.2s ease-in-out infinite" },
   loadText: { color: muted, fontSize: 15, textAlign: "center", fontFamily: "'Cairo','DM Sans',sans-serif" },
 
-  signCard: { background: paper, border: `1px solid ${line}`, borderRadius: 20, padding: "20px 16px 22px", width: "min(420px, 100%)", minWidth: 0, boxSizing: "border-box", boxShadow: "0 18px 50px -30px rgba(80,50,20,.4)" },
+  signCard: { background: "#fff", border: "none", borderRadius: 28, padding: "18px 18px 22px", width: "100%", minWidth: 0, boxSizing: "border-box", boxShadow: "0 16px 40px -24px rgba(0,0,0,.28)", display: "flex", flexDirection: "column", alignItems: "stretch" },
   brandRow: { display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", gap: 8, marginBottom: 16 },
-  logoXl: { width: "min(240px, 70vw)", height: "auto", display: "block", objectFit: "contain", background: "transparent", border: "none" },
-  logoLg: { width: "min(160px, 46vw)", height: "auto", display: "block", objectFit: "contain", background: "transparent", border: "none" },
+  logoXl: { width: "100%", maxWidth: 420, height: "auto", display: "block", objectFit: "contain", background: "transparent", border: "none", margin: "0 auto 4px" },
+  logoLg: { width: "min(220px, 64vw)", height: "auto", display: "block", objectFit: "contain", background: "transparent", border: "none", margin: "0 auto 4px" },
+  authTagline: { margin: "0 8px 18px", fontSize: 14, lineHeight: 1.55, color: muted, textAlign: "center", fontFamily: "'Cairo','DM Sans',sans-serif", fontWeight: 700 },
   logoSm: { width: 108, height: "auto", display: "block", objectFit: "contain", background: "transparent", border: "none", flexShrink: 0 },
   logoAvatar: { width: 42, height: 42, borderRadius: "50%", objectFit: "cover", display: "block", background: "#eee", flexShrink: 0 },
   logoLock: { width: 58, height: "auto", display: "block", objectFit: "contain", background: "transparent", border: "none", flexShrink: 0 },
@@ -47,9 +51,9 @@ export const S = {
   errText: { color: clay, fontSize: 13, marginTop: 10, fontWeight: 600 },
   okText: { color: green, fontSize: 13, marginTop: 10, fontWeight: 600 },
   finePrint: { fontSize: 12.5, color: muted, marginTop: 14, lineHeight: 1.5 },
-  linkBtn: { background: "none", border: "none", color: clay, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo','DM Sans',sans-serif", fontSize: 13.5, padding: 0, marginTop: 14 },
-  signupHint: { marginTop: 16, textAlign: "center", fontSize: 14, color: muted, fontFamily: "'Cairo','DM Sans',sans-serif" },
-  signupLink: { background: yolk, color: ink, border: "none", borderRadius: 999, padding: "8px 14px", fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo','DM Sans',sans-serif", fontSize: 15, marginRight: 6 },
+  linkBtn: { background: "none", border: "none", color: clay, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo','DM Sans',sans-serif", fontSize: 13.5, padding: 0, marginTop: 14, width: "100%", textAlign: "center" },
+  signupHint: { marginTop: 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, textAlign: "center", fontSize: 14, color: muted, fontFamily: "'Cairo','DM Sans',sans-serif" },
+  signupLink: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "100%", background: yolk, color: ink, border: "none", borderRadius: 14, padding: "12px 14px", fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo','DM Sans',sans-serif", fontSize: 15 },
   authMemeCard: { background: paper, borderRadius: 20, padding: "12px 12px 16px", width: "min(420px, 92vw)", maxHeight: "min(92dvh, 640px)", overflowY: "auto", textAlign: "center", boxShadow: "0 24px 60px -18px rgba(0,0,0,.5)", cursor: "default" },
   authMemeCap: { margin: "10px 8px 12px", fontFamily: "'Cairo','DM Sans',sans-serif", fontWeight: 800, fontSize: 18, lineHeight: 1.45, color: ink },
 
@@ -190,8 +194,9 @@ export const S = {
   pieSwatch: { width: 12, height: 12, borderRadius: 4, flexShrink: 0 },
   pieVal: { fontWeight: 800 },
   qrOfficerBox: { background: cream, border: `1px solid ${line}`, borderRadius: 12, padding: 12, marginTop: 8 },
-  teamBlock: { background: paper, border: `1px solid ${line}`, borderRadius: 16, padding: 14, marginBottom: 12 },
-  teamHead: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: 12, paddingBottom: 10, borderBottom: `1px solid ${line}` },
+  teamBlock: { background: paper, border: `1px solid ${line}`, borderRadius: 16, padding: "4px 8px", marginBottom: 12, overflow: "hidden" },
+  teamHead: { width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 6px", margin: 0, border: "none", background: "transparent", cursor: "pointer", color: ink, fontFamily: "'Cairo',sans-serif", textAlign: "right" },
+  teamHeadOpen: { borderBottom: `1px solid ${line}`, marginBottom: 10 },
   teamTitle: { fontFamily: "'Cairo',sans-serif", fontWeight: 800, fontSize: 16, margin: 0 },
   teamMeta: { fontSize: 12.5, color: muted, fontWeight: 700, marginTop: 2 },
   userRow: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, background: paper, border: `1px solid ${line}`, borderRadius: 14, padding: "12px 14px" },
@@ -262,8 +267,8 @@ export const fog = "#8A8A8A";
 
 export const U = {
   app: { fontFamily: "'Cairo','DM Sans',ui-sans-serif,system-ui,sans-serif", background: mist, color: night, minHeight: "100dvh" },
-  shell: { maxWidth: 430, margin: "0 auto", minHeight: "100dvh", background: mist, position: "relative", paddingBottom: "calc(96px + env(safe-area-inset-bottom))", overflowX: "hidden" },
-  sticky: { position: "sticky", top: 0, zIndex: 30, background: "rgba(244,244,244,.96)", backdropFilter: "blur(10px)", padding: "8px 14px 10px", borderBottom: "1px solid #ececec" },
+  shell: { maxWidth: 430, margin: "0 auto", minHeight: "100dvh", background: mist, position: "relative", paddingBottom: "calc(96px + env(safe-area-inset-bottom))" },
+  sticky: { position: "sticky", top: 0, zIndex: 50, background: "rgba(244,244,244,.98)", backdropFilter: "blur(12px)", padding: "8px 14px 10px", borderBottom: "1px solid #ececec" },
   brandLock: { display: "flex", alignItems: "center", gap: 10 },
   brandName: { fontFamily: "'Cairo',sans-serif", fontSize: 15, fontWeight: 800, lineHeight: 1.3, color: night, margin: 0 },
   stickyRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 },

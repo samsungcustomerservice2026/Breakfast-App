@@ -8,7 +8,7 @@ import { pickSituationMeme, loadMemeCatalog } from "./memes.js";
 import { MEME_SITUATIONS } from "./memeCatalog.js";
 import { expandOrders, withNewBatch, setBatchPaid, parseOrderId } from "./orders.js";
 import { loadPayQr, savePayQr, loadPayLink, savePayLink, loadCollectorPay, fileToDataUrl, normalizePayLink, settingsSaveHint, PAY_QR_FALLBACK, loadSetting, saveSetting } from "./settings.js";
-import { uploadAsset, setMediaRev, resolveLogoSrc, publicObject, LOGO_PATH, MEDIA_REV_KEY, MEMES_BUCKET } from "./media.js";
+import { uploadAsset, setMediaRev, resolveLogoSrc, publicObject, LOGO_PATH, MEDIA_REV_KEY, MEMES_BUCKET, LOGO_BUCKET } from "./media.js";
 import { POPULAR_ID, POPULAR_ITEMS, CAT_SHORT, CAT_ICON, POPULAR_ID_SET } from "./popular.js";
 import ReportView from "./report.jsx";
 
@@ -62,16 +62,28 @@ function ChoiceGrid({ value, onChange, options }) {
     </div>
   );
 }
-const Logo = ({ size = "sm" }) => {
+const Logo = ({ size = "sm", className }) => {
   const img = size === "xl" ? S.logoXl : size === "lg" ? S.logoLg : size === "avatar" ? S.logoAvatar : size === "lock" ? S.logoLock : S.logoSm;
-  const [src, setSrc] = useState("/logo.png?v=fit");
+  const [src, setSrc] = useState(() => (
+    import.meta.env.VITE_SUPABASE_URL
+      ? publicObject(LOGO_BUCKET, LOGO_PATH, Date.now())
+      : `/logo.png?v=${Date.now()}`
+  ));
   useEffect(() => {
-    const apply = async (rev) => {
-      setMediaRev(rev);
+    const apply = async (rev, path) => {
+      setMediaRev(rev || "");
+      if (path) {
+        setSrc(publicObject(LOGO_BUCKET, path, rev || Date.now()));
+        return;
+      }
       setSrc(await resolveLogoSrc(rev));
     };
-    loadSetting(MEDIA_REV_KEY, "").then(apply);
-    const onRev = (e) => apply(e.detail ?? "");
+    loadSetting(MEDIA_REV_KEY, "").then((rev) => apply(rev));
+    const onRev = (e) => {
+      const d = e.detail;
+      if (d && typeof d === "object") apply(d.rev, d.path);
+      else apply(d);
+    };
     window.addEventListener("media-rev", onRev);
     return () => window.removeEventListener("media-rev", onRev);
   }, []);
@@ -80,8 +92,13 @@ const Logo = ({ size = "sm" }) => {
       key={src}
       src={src}
       alt={APP_NAME}
+      className={className}
       style={img}
-      onError={() => setSrc("/logo.png?v=fit")}
+      onError={() => {
+        const local = `/logo.png?v=${Date.now()}`;
+        if (src === local) return;
+        setSrc(local);
+      }}
     />
   );
 };
@@ -295,7 +312,14 @@ export default function App() {
   );
 }
 
-function Center({ children }) { return (<div style={S.screenCenter}>{children}<style>{globalCss}</style></div>); }
+function Center({ children }) {
+  return (
+    <div style={{ ...S.screenCenter, direction: "rtl" }}>
+      <div style={S.authStack}>{children}</div>
+      <style>{globalCss}</style>
+    </div>
+  );
+}
 
 function MemePop({ src, localSrc, caption, onClose, actionLabel = "تمام", onAction }) {
   const go = onAction || onClose;
@@ -358,9 +382,9 @@ function AuthScreen() {
 
   return (
     <Center>
-      <Logo size="xl" />
-      <p style={{ ...S.brandSub, margin: "0 0 4px", maxWidth: 420 }} dir="rtl">الجوع كافر — الحق اطلب الفطار قبل الساعة 10</p>
-      <div style={S.signCard}>
+      <div style={S.signCard} dir="rtl">
+        <Logo size="xl" className="auth-logo" />
+        <p style={S.authTagline}>الجوع كافر — الحق اطلب الفطار قبل الساعة 10</p>
         <label style={S.label}>الإيميل</label>
         <input style={S.input} type="email" value={email} placeholder="الإيميل بتاع الشغل" onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
         <label style={{ ...S.label, marginTop: 14 }}>الباسورد</label>
@@ -373,10 +397,10 @@ function AuthScreen() {
         {mode === "signup" ? (
           <button style={S.linkBtn} onClick={() => { setMode("signin"); setErr(""); setOk(""); }}>عندك حساب؟ ادخل</button>
         ) : (
-          <p style={S.signupHint} dir="rtl">
-            جديد هنا؟{" "}
-            <button style={S.signupLink} onClick={() => { setMode("signup"); setErr(""); setOk(""); }}>اعمل حساب</button>
-          </p>
+          <div style={S.signupHint}>
+            <span>جديد هنا؟</span>
+            <button type="button" style={S.signupLink} onClick={() => { setMode("signup"); setErr(""); setOk(""); }}>اعمل حساب</button>
+          </div>
         )}
       </div>
       {noAccount && (
@@ -418,10 +442,10 @@ function ProfileScreen({ session, existing, onDone }) {
 
   return (
     <Center>
-      <Logo size="lg" />
-      <div style={S.signCard}>
-        <h1 style={S.brandTitle} dir="rtl">ثواني يا باشا</h1>
-        <p style={{ ...S.brandSub, marginBottom: 16 }} dir="rtl">اسمك والفريق… على مسئوليتي</p>
+      <div style={S.signCard} dir="rtl">
+        <Logo size="lg" className="auth-logo" />
+        <h1 style={{ ...S.brandTitle, textAlign: "center" }}>ثواني يا باشا</h1>
+        <p style={{ ...S.authTagline, marginBottom: 16 }}>اسمك والفريق… على مسئوليتي</p>
         <label style={S.label}>اسمك</label>
         <input style={S.input} value={name} placeholder="مثلاً أحمد فوزي" onChange={(e) => setName(e.target.value)} autoFocus />
         <label style={{ ...S.label, marginTop: 14 }}>الموبايل</label>
@@ -917,7 +941,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
 
   return (
     <div style={U.shell} dir="rtl">
-      <div style={U.sticky}>
+      <header style={U.sticky}>
         <div style={U.brandLock}>
           <Logo size="lock" />
           <h1 style={U.brandName}>{APP_NAME}</h1>
@@ -933,7 +957,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
             </button>
           </div>
         </div>
-      </div>
+      </header>
 
       {tab === "history" ? (
         <div style={U.hist}>
@@ -1461,6 +1485,7 @@ function AdminView({ narrow, showToast, profile }) {
   const [selectedDate, setSelectedDate] = useState(today);
   const [section, setSection] = useState("orders");
   const [mode, setMode] = useState("person");
+  const [openTeam, setOpenTeam] = useState("");
   const [pickedOfficer, setPickedOfficer] = useState("");
   const [payQr, setPayQr] = useState(PAY_QR_FALLBACK);
   const [payLinkDraft, setPayLinkDraft] = useState("");
@@ -1478,6 +1503,10 @@ function AdminView({ narrow, showToast, profile }) {
     loadPayQr().then(setPayQr);
     loadPayLink().then(setPayLinkDraft);
   }, []);
+
+  useEffect(() => {
+    setOpenTeam("");
+  }, [selectedDate, pickedOfficer, mode]);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) { setLoading(true); setError(null); }
@@ -1642,12 +1671,12 @@ function AdminView({ narrow, showToast, profile }) {
     if (!file) return;
     setLogoBusy(true);
     try {
-      await uploadAsset(LOGO_PATH, file);
       const rev = String(Date.now());
+      await uploadAsset(LOGO_PATH, file);
       setMediaRev(rev);
       await saveSetting(MEDIA_REV_KEY, rev);
-      window.dispatchEvent(new CustomEvent("media-rev", { detail: rev }));
-      showToast("اللوغو اترفعت على سوبابيس.");
+      window.dispatchEvent(new CustomEvent("media-rev", { detail: { rev, path: LOGO_PATH } }));
+      showToast("اللوغو اتحفظ. اعمل خروج وشوف صفحة الدخول.");
     } catch (err) {
       showToast(err.message?.includes("Bucket") || err.message?.includes("not found")
         ? "ارفع الصورة على Storage → Logo"
@@ -1852,22 +1881,36 @@ function AdminView({ narrow, showToast, profile }) {
             </div>
           ) : mode === "team" ? (
             <div>
-              {byTeam.map((g) => (
-                <div key={g.id} style={S.teamBlock}>
-                  <div style={S.teamHead}>
-                    <div>
-                      <h3 style={S.teamTitle}>{g.label}</h3>
-                      <div style={S.teamMeta}>{g.orders.length} أوردر{g.unpaid ? ` · ${g.unpaid} لسه ما دفعوش` : ""}</div>
-                    </div>
-                    <div style={S.payAmount}>{money(g.due)}</div>
+              {byTeam.map((g) => {
+                const open = openTeam === g.id;
+                return (
+                  <div key={g.id} style={S.teamBlock}>
+                    <button
+                      type="button"
+                      style={{ ...S.teamHead, ...(open ? S.teamHeadOpen : {}) }}
+                      onClick={() => setOpenTeam(open ? "" : g.id)}
+                      aria-expanded={open}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <h3 style={S.teamTitle}>{g.label}</h3>
+                        <div style={S.teamMeta}>{g.orders.length} أوردر{g.unpaid ? ` · ${g.unpaid} لسه ما دفعوش` : ""}</div>
+                      </div>
+                      <div style={{ flexShrink: 0, textAlign: "left" }}>
+                        <div style={S.payAmount}>{money(g.due)}</div>
+                        <div style={S.userFoldHint}>{open ? "اقفل" : "الأوردرات"}</div>
+                        <ChevronDown size={16} style={{ display: "block", margin: "4px 0 0 auto", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                      </div>
+                    </button>
+                    {open && (
+                      <div style={{ ...S.orderList, padding: "0 6px 10px" }}>
+                        {g.orders.map((o) => (
+                          <AdminOrderCard key={o.id} o={o} siblings={g.orders} onMarkPaid={markPaid} />
+                        ))}
+                      </div>
+                    )}
                   </div>
-                  <div style={S.orderList}>
-                    {g.orders.map((o) => (
-                      <AdminOrderCard key={o.id} o={o} siblings={g.orders} onMarkPaid={markPaid} />
-                    ))}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
               {!byTeam.length && <p style={S.cartEmpty}>{superAdmin ? "مفيش أوردرات في اليوم ده." : "مفيش أوردرات نازلة عليك في اليوم ده."}</p>}
             </div>
           ) : (
