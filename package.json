@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "upload-assets": "node --env-file=.env scripts/upload-assets.mjs",
+    "sync-memes": "node --env-file=.env scripts/sync-memes.mjs",
+    "build-menu": "node scripts/build-menu-sql.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

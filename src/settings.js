@@ -35,6 +35,27 @@ export async function loadPayLink() {
   return loadSetting(PAY_LINK_KEY, "");
 }
 
+export async function loadCollectorPay(collectorId) {
+  const fallbackQr = await loadPayQr();
+  const fallbackLink = await loadPayLink();
+  if (!collectorId) return { name: "", qr: fallbackQr, link: fallbackLink };
+  try {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("name,pay_qr,pay_link")
+      .eq("id", collectorId)
+      .maybeSingle();
+    if (error) throw error;
+    return {
+      name: data?.name || "",
+      qr: data?.pay_qr || fallbackQr,
+      link: data?.pay_link || fallbackLink || "",
+    };
+  } catch {
+    return { name: "", qr: fallbackQr, link: fallbackLink };
+  }
+}
+
 export async function savePayLink(url) {
   return saveSetting(PAY_LINK_KEY, url);
 }

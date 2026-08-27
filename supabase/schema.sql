@@ -9,6 +9,8 @@ create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   name        text not null,
   phone       text not null,
+  department  text,                    -- cs | sales-mx | sales-ce | marketing | hr | finance | legal | it
+  role        text not null default 'user', -- user | admin | super_admin
   is_admin    boolean not null default false,
   created_at  timestamptz not null default now()
 );
@@ -18,7 +20,7 @@ create table if not exists public.menu_categories (
   id        text primary key,          -- e.g. 'foul'
   name      text not null,             -- English label
   name_ar   text,                      -- Arabic label
-  tiered    boolean not null default false, -- true = S/M/L, false = Shami/Balady
+  tiered    boolean not null default false, -- true = S/M/L or plate sizes, false = bread / each
   sort      int not null default 0
 );
 
@@ -30,9 +32,11 @@ create table if not exists public.menu_items (
   -- prices in EGP; only the columns relevant to the category's tier are filled
   price_shami  numeric,
   price_balady numeric,
+  price_fino   numeric,                -- فينو bread
   price_sm     numeric,
   price_md     numeric,
   price_lg     numeric,
+  price_each   numeric,                -- single-price items (no bread size)
   sort         int not null default 0
 );
 
@@ -40,11 +44,13 @@ create table if not exists public.menu_items (
 create table if not exists public.orders (
   id          uuid primary key default gen_random_uuid(),
   user_id     uuid not null references auth.users(id) on delete cascade,
+  collector_id uuid references public.profiles(id) on delete set null, -- admin who will order/pay
   order_date  date not null,
   -- items: [{ itemId, categoryId, categoryName, name, nameAr, tier, tierLabel, price, qty }]
   items       jsonb not null default '[]'::jsonb,
   total       numeric not null default 0,
   paid        boolean not null default false,
+  pay_proof   text,
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -64,19 +70,32 @@ alter table public.orders          enable row level security;
 create or replace function public.is_admin()
 returns boolean
 language sql stable security definer set search_path = public as $$
-  select coalesce((select is_admin from public.profiles where id = auth.uid()), false);
+  select coalesce((
+    select is_admin or role in ('admin', 'super_admin')
+    from public.profiles where id = auth.uid()
+  ), false);
+$$;
+
+create or replace function public.is_super_admin()
+returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select role = 'super_admin' from public.profiles where id = auth.uid()), false);
 $$;
 
 -- ---- profiles ----
 drop policy if exists "profiles self read"      on public.profiles;
 drop policy if exists "profiles admin read"     on public.profiles;
+drop policy if exists "profiles collectors read" on public.profiles;
 drop policy if exists "profiles self upsert"    on public.profiles;
 drop policy if exists "profiles self update"    on public.profiles;
+drop policy if exists "profiles super admin update" on public.profiles;
 
 create policy "profiles self read"   on public.profiles for select using (auth.uid() = id);
 create policy "profiles admin read"  on public.profiles for select using (public.is_admin());
+create policy "profiles collectors read" on public.profiles for select using (is_admin = true or role in ('admin', 'super_admin'));
 create policy "profiles self upsert" on public.profiles for insert with check (auth.uid() = id);
 create policy "profiles self update" on public.profiles for update using (auth.uid() = id);
+create policy "profiles super admin update" on public.profiles for update using (public.is_super_admin()) with check (public.is_super_admin());
 
 -- ---- menu: everyone signed in can read; only admins can write ----
 drop policy if exists "menu cat read"  on public.menu_categories;
@@ -85,9 +104,9 @@ drop policy if exists "menu item read"  on public.menu_items;
 drop policy if exists "menu item write" on public.menu_items;
 
 create policy "menu cat read"  on public.menu_categories for select using (auth.role() = 'authenticated');
-create policy "menu cat write" on public.menu_categories for all using (public.is_admin()) with check (public.is_admin());
+create policy "menu cat write" on public.menu_categories for all using (public.is_super_admin()) with check (public.is_super_admin());
 create policy "menu item read"  on public.menu_items for select using (auth.role() = 'authenticated');
-create policy "menu item write" on public.menu_items for all using (public.is_admin()) with check (public.is_admin());
+create policy "menu item write" on public.menu_items for all using (public.is_super_admin()) with check (public.is_super_admin());
 
 -- ---- orders: a user manages their own; admins can read/update all ----
 drop policy if exists "orders self read"   on public.orders;
@@ -114,10 +133,13 @@ alter table public.app_settings enable row level security;
 drop policy if exists "settings read"  on public.app_settings;
 drop policy if exists "settings write" on public.app_settings;
 create policy "settings read"  on public.app_settings for select using (auth.role() = 'authenticated');
-create policy "settings write" on public.app_settings for all using (public.is_admin()) with check (public.is_admin());
+create policy "settings write" on public.app_settings for all using (public.is_super_admin()) with check (public.is_super_admin());
 
 -- ============================================================
--- Make yourself an admin (run AFTER you sign up once in the app):
---   update public.profiles set is_admin = true where id =
+-- Super admin (media + promoting admins):
+--   update public.profiles set role = 'super_admin', is_admin = true where id =
 --     (select id from auth.users where email = 'you@example.com');
+-- Regular admin (collect orders only): set role = 'admin' from the super-admin panel,
+-- or: update public.profiles set role = 'admin', is_admin = true where ...
+-- Also run supabase/roles.sql on existing databases.
 -- ============================================================

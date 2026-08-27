@@ -1,122 +1,78 @@
-export const MEMES = [
-  "/memes/meme-01.jpg",
-  "/memes/meme-02.webp",
-  "/memes/meme-03.jpg",
-  "/memes/meme-04.jpg",
-  "/memes/meme-05.jpg",
-  "/memes/meme-06.png",
-  "/memes/meme-07.jpg",
-  "/memes/meme-08.jpg",
-  "/memes/meme-09.jpg",
-  "/memes/meme-10.webp",
-  "/memes/meme-11.jpg",
-  "/memes/meme-12.jpg",
-  "/memes/meme-13.jpg",
-  "/memes/meme-14.jpg",
-  "/memes/meme-15.jpg",
-  "/memes/meme-16.jpg",
-  "/memes/meme-17.jpg",
-  "/memes/meme-18.jpg",
-  "/memes/meme-19.jpg",
-  "/memes/meme-20.jpg",
-  "/memes/meme-21.jpg",
-  "/memes/meme-22.jpg",
-  "/memes/meme-23.jpg",
-  "/memes/meme-24.jpg",
-  "/memes/meme-25.jpg",
-  "/memes/meme-26.jpg",
-  "/memes/meme-27.jpg",
-  "/memes/meme-28.jpg",
-  "/memes/meme-29.jpg",
-  "/memes/meme-30.jpg",
-  "/memes/meme-31.jpg",
-  "/memes/meme-32.jpg",
-  "/memes/meme-33.jpg",
-  "/memes/meme-34.jpg",
-  "/memes/meme-35.jpg",
-  "/memes/meme-36.jpg",
-  "/memes/meme-37.jpg",
-  "/memes/meme-38.jpg",
-  "/memes/meme-39.jpg",
-  "/memes/meme-40.jpg",
-  "/memes/meme-41.jpg",
-  "/memes/meme-42.jpg",
-  "/memes/meme-43.jpg",
-  "/memes/meme-44.jpg",
-  "/memes/meme-45.jpg",
-  "/memes/meme-46.webp",
-];
+import { supabase } from "./supabase.js";
+import { MEME_CATALOG } from "./memeCatalog.js";
 
-/** The picture is the joke — never overlay extra text. */
-const POOLS = {
-  first: ["/memes/meme-16.jpg", "/memes/meme-12.jpg", "/memes/meme-08.jpg"],
-  second: ["/memes/meme-07.jpg", "/memes/meme-09.jpg", "/memes/meme-27.jpg"],
-  tooMuch: ["/memes/meme-02.webp", "/memes/meme-06.png", "/memes/meme-33.jpg"],
-  chaos: ["/memes/meme-20.jpg", "/memes/meme-02.webp", "/memes/meme-06.png", "/memes/meme-33.jpg"],
-  spicy: ["/memes/meme-07.jpg", "/memes/meme-40.jpg"],
-  omelette: ["/memes/meme-29.jpg", "/memes/meme-44.jpg"],
-  box: ["/memes/meme-17.jpg"],
-  puree: ["/memes/meme-38.jpg"],
-  fancy: ["/memes/meme-24.jpg"],
-  moussaka: ["/memes/meme-14.jpg"],
-  again: ["/memes/meme-09.jpg", "/memes/meme-16.jpg", "/memes/meme-30.jpg"],
-};
+function isCheese(itemId) {
+  const s = String(itemId);
+  if (/kiri|mozz|ched|roumi|feta|qarish|cheese|gbna|thyme/.test(s)) return true;
+  if (/(?:^|-)(?:white|old)(?:-|$)/.test(s)) return true;
+  if (/mix/.test(s) && !/pickle|fried-mix/.test(s)) return true;
+  return false;
+}
 
-const SPICY = new Set(["foul-hot", "foul-salsa", "box-hotoil", "box-tesha"]);
-const OMELETTE = new Set([
-  "egg-omelet", "egg-roll", "foul-omelet", "tam-omelet", "bat-omelet",
-  "misc-french", "misc-egga", "egg-ched", "egg-roumi", "egg-saus", "egg-bastr", "egg-chez-tom",
-]);
-const PUREE = new Set(["bat-puree", "box-batpur"]);
-const FANCY = new Set([
-  "foul-bastr", "tam-bastr", "egg-bastr", "box-bastr",
-  "tam-kiri", "tam-mozz", "bat-ched", "bat-roumi", "egg-ched", "egg-roumi",
-  "egg-chez-tom", "misc-tomato", "misc-fried",
-]);
-const MOUSSAKA = new Set([
-  "misc-mesa", "misc-mesa-mt", "misc-mesa-sg",
-  "box-mesa", "box-mesa-mt", "box-mesa-sg", "box-mesa-so",
-]);
+let catalog = { ...MEME_CATALOG };
 
-function fromPool(pool, exceptSrc) {
-  const list = (pool || MEMES).filter((m) => m !== exceptSrc);
-  const use = list.length ? list : (pool || MEMES);
-  return use[Math.floor(Math.random() * use.length)] || MEMES[0];
+export async function loadMemeCatalog() {
+  try {
+    const { data, error } = await supabase.from("meme_files").select("situation, path").order("sort");
+    if (error || !data?.length) return catalog;
+    const next = {};
+    for (const row of data) {
+      if (!row.situation || !row.path) continue;
+      (next[row.situation] ||= []).push(row.path);
+    }
+    if (Object.keys(next).length) catalog = next;
+  } catch { /* keep bundled catalog */ }
+  return catalog;
+}
+
+function norm(s) {
+  return String(s || "")
+    .replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\/[^/]+\//, "")
+    .replace(/^\//, "")
+    .split("?")[0];
+}
+
+function fromPool(situation, exceptSrc) {
+  const pool = catalog[situation] || [];
+  if (!pool.length) return "";
+  const except = norm(exceptSrc);
+  const list = pool.filter((m) => norm(m) !== except);
+  const use = list.length ? list : pool;
+  const pick = use[Math.floor(Math.random() * use.length)];
+  const path = norm(pick);
+  return path ? `/${path}` : "";
+}
+
+function situationForAdd({ itemId, catId, count }) {
+  if (count === 2) return "second_item";
+  if (count >= 3) return "many_items";
+  if (isCheese(itemId)) return "cheese";
+  if (catId === "foul" || String(itemId).startsWith("foul-") || String(itemId).startsWith("box-plain") || String(itemId).startsWith("box-alex") || String(itemId).startsWith("box-olive") || String(itemId).startsWith("box-sug") || String(itemId).startsWith("box-hotoil") || String(itemId).startsWith("box-lemon") || String(itemId).startsWith("box-bastr") || String(itemId).startsWith("box-butter")) return "foul";
+  if (catId === "taameya" || catId === "green" || String(itemId).startsWith("tam-") || String(itemId).startsWith("green-")) return "taameya";
+  if (catId === "omelet" || catId === "omelet_plates" || catId === "eggs" || String(itemId).startsWith("om-") || String(itemId).startsWith("plt-") || String(itemId).startsWith("egg-")) return "egg";
+  if (catId === "fries" || catId === "batates" || String(itemId).startsWith("fr-") || String(itemId).startsWith("bat-") || String(itemId).startsWith("ori-fries") || String(itemId).startsWith("ori-pomme") || String(itemId).startsWith("ori-chips") || String(itemId).startsWith("ori-mash")) return "potato";
+  return "";
 }
 
 /**
- * Situation-first: type of sandwich, then how many items.
- * Returns { src, shake } with no caption.
+ * Standalone situation pools from meme_files.
+ * if count===2 → second_item
+ * if count>=3 → many_items
+ * else cheese / foul / taameya / egg / potato from the item
  */
-export function pickSituationMeme({ itemId, catId, count, qty, exceptSrc }) {
-  let pool = MEMES;
+export function pickSituationMeme({ event, itemId, catId, count, exceptSrc }) {
+  let situation = "";
   let shake = false;
 
-  if (count >= 5) {
-    pool = POOLS.chaos;
-    shake = true;
-  } else if (count >= 3) {
-    pool = POOLS.tooMuch;
-    shake = true;
-  } else if (catId === "boxes" || (itemId && itemId.startsWith("box-"))) {
-    pool = POOLS.box;
-  } else if (OMELETTE.has(itemId)) {
-    pool = POOLS.omelette;
-  } else if (SPICY.has(itemId)) {
-    pool = POOLS.spicy;
-  } else if (PUREE.has(itemId)) {
-    pool = POOLS.puree;
-  } else if (FANCY.has(itemId)) {
-    pool = POOLS.fancy;
-  } else if (MOUSSAKA.has(itemId)) {
-    pool = POOLS.moussaka;
-  } else if (qty >= 2) {
-    pool = POOLS.again;
-  } else if (count === 1) {
-    pool = POOLS.first;
-  } else if (count === 2) {
-    pool = POOLS.second;
+  if (event === "idle") situation = "idle";
+  else if (event === "remove") situation = "remove";
+  else if (event === "pay_one") situation = "pay_one";
+  else if (event === "pay") situation = "pay";
+  else if (event === "add") {
+    situation = situationForAdd({ itemId, catId, count });
+    if (situation === "many_items") shake = true;
   }
 
-  return { src: fromPool(pool, exceptSrc), shake };
+  const src = situation ? fromPool(situation, exceptSrc) : "";
+  return { src, shake, situation };
 }
