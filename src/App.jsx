@@ -10,7 +10,7 @@ import { expandOrders, withNewBatch, parseOrderId, flattenOrderItems, orderBatch
 import { loadPayQr, savePayQr, loadPayLink, savePayLink, loadCollectorPay, fileToDataUrl, normalizePayLink, settingsSaveHint, PAY_QR_FALLBACK, loadSetting, saveSetting } from "./settings.js";
 import { uploadAsset, setMediaRev, resolveLogoSrc, publicObject, memeUrls, LOGO_PATH, MEDIA_REV_KEY, MEMES_BUCKET, LOGO_BUCKET } from "./media.js";
 import { registerNotifyWorker, unlockAudio, showPhonePing, enablePhoneAlerts, shouldAskNotify, isIosPhone, isStandaloneApp, syncPushSubscription, notifyPermission, listenInstallPrompt, shouldAskInstall, dismissInstallAsk, canNativeInstall, promptInstall } from "./notify.js";
-import { POPULAR_ID, POPULAR_ITEMS, CAT_SHORT, CAT_ICON, POPULAR_ID_SET } from "./popular.js";
+import { POPULAR_ID, POPULAR_ITEMS, CAT_SHORT, CAT_ICON, POPULAR_ID_SET, HIDDEN_SHOP_CATS, HIDDEN_ORIENTAL_IDS } from "./popular.js";
 import ReportView from "./report.jsx";
 
 const TIER_LABELS = { shami: "شامي", balady: "بلدي", fino: "فينو", sm: "صغير", md: "وسط", lg: "كبير", each: "" };
@@ -18,6 +18,7 @@ const CAT_TIER_LABELS = { omelet_plates: { sm: "2 بيض", md: "3 بيض" } };
 const PRICE_NOTE = "ملحوظة: الأسعار دي مش ثابتة، والأسعار ممكن تزيد.";
 const DELIVERY_FEE = 5;
 const PING_MSG = "الأكل وصل وان خلص الفول انا مش مسؤول 😂";
+const CLOSE_MSG = "الحلة على النار والموضوع مسألة وقت 😎";
 const APP_NAME = "هيئة مكافحة الجوع المش رسمية";
 const TEAMS = [
   { id: "cs", label: "Customer service CS" },
@@ -870,14 +871,34 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
 
   const shopCats = useMemo(() => {
     const byId = {};
-    for (const c of catalog) for (const it of c.items) byId[it.id] = { it, cat: c };
+    const renameFries = (name) => String(name || "").replace(/بوم فريت/g, "بطاطس");
+    const visible = catalog
+      .filter((c) => !HIDDEN_SHOP_CATS.has(c.id))
+      .map((c) => {
+        if (c.id === "oriental") {
+          return { ...c, items: (c.items || []).filter((it) => !HIDDEN_ORIENTAL_IDS.has(it.id)) };
+        }
+        if (c.id !== "fries") return c;
+        return {
+          ...c,
+          name_ar: "سندوتشات البطاطس",
+          name: "Potato sandwiches",
+          items: (c.items || []).map((it) => ({ ...it, name_ar: renameFries(it.name_ar || it.name) })),
+        };
+      });
+    const byOrder = [];
+    const boxes = visible.find((c) => c.id === "boxes");
+    const rest = visible.filter((c) => c.id !== "boxes");
+    for (const c of visible) for (const it of c.items) byId[it.id] = { it, cat: c };
     const items = POPULAR_ITEMS.map((p) => {
       const hit = byId[p.id] || (p.alt ? byId[p.alt] : null);
       if (!hit) return null;
       return { ...hit.it, name_ar: p.nameAr || hit.it.name_ar, _srcCat: hit.cat };
     }).filter(Boolean);
-    if (!items.length) return catalog;
-    return [{ id: POPULAR_ID, name: "Most ordered", name_ar: "الأكثر طلبًا", tiered: false, items }, ...catalog];
+    if (items.length) byOrder.push({ id: POPULAR_ID, name: "Most ordered", name_ar: "الأكثر طلبًا", tiered: false, items });
+    if (boxes) byOrder.push(boxes);
+    byOrder.push(...rest);
+    return byOrder.length ? byOrder : visible;
   }, [catalog]);
 
   useEffect(() => {
@@ -1037,16 +1058,19 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
   const playPing = useCallback(async (row) => {
     if (!row?.id || seenPings.current.has(row.id)) return;
     seenPings.current.add(row.id);
-    const raw = String(row.meme_path || "").replace(/^\//, "");
-    const picked = raw ? `/${raw}` : pickSituationMeme({ event: "delivered" }).src;
-    if (picked) {
-      lastMeme.current = picked;
-      const urls = memeUrls(picked);
-      setBravo({ src: urls.local || picked, remote: urls.remote, shake: false, situation: "delivered", id: Date.now() });
-      if (bravoTimer.current) clearTimeout(bravoTimer.current);
+    const text = row.message || (row.kind === "closed" ? CLOSE_MSG : PING_MSG);
+    if (row.kind !== "closed") {
+      const raw = String(row.meme_path || "").replace(/^\//, "");
+      const picked = raw ? `/${raw}` : pickSituationMeme({ event: "delivered" }).src;
+      if (picked) {
+        lastMeme.current = picked;
+        const urls = memeUrls(picked);
+        setBravo({ src: urls.local || picked, remote: urls.remote, shake: false, situation: "delivered", id: Date.now() });
+        if (bravoTimer.current) clearTimeout(bravoTimer.current);
+      }
     }
-    showToast(row.message || PING_MSG);
-    showPhonePing(row.message || PING_MSG);
+    showToast(text);
+    showPhonePing(text);
     await supabase.from("order_pings").update({ read_at: new Date().toISOString() }).eq("id", row.id);
   }, [showToast]);
 
@@ -1294,7 +1318,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
   const needle = q.trim();
   const searching = !!needle;
   const shown = searching
-    ? catalog.flatMap((c) => (c.items || []).filter((it) => matchesItemSearch(it, c, needle)).map((it) => ({ ...it, _srcCat: c })))
+    ? shopCats.flatMap((c) => (c.id === POPULAR_ID ? [] : (c.items || []).filter((it) => matchesItemSearch(it, c, needle)).map((it) => ({ ...it, _srcCat: it._srcCat || c }))))
     : (cat?.items || []);
   const firstName = (profile.name || "").split(" ")[0] || "معلم";
   const admin = isAdminUser(profile);
@@ -1501,12 +1525,19 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
             <div className="catRail" style={U.catRail}>
               {shopCats.map((c) => {
                 const on = c.id === activeCat;
+                const hot = c.id === POPULAR_ID;
                 const iconId = CAT_ICON[c.id] || c.items?.[0]?.id;
                 return (
-                  <button key={c.id} type="button" style={U.catBtn} onClick={() => setActiveCat(c.id)}>
-                    <img src={itemImage(iconId)} alt="" style={{ ...U.catImg, ...(on ? U.catImgOn : {}) }} onError={onImgError} />
-                    <span style={{ ...U.catName, ...(on ? U.catNameOn : {}) }}>{CAT_SHORT[c.id] || c.name_ar || c.name}</span>
-                    {on ? <span style={U.catLine} /> : <span style={{ height: 3 }} />}
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={hot && !on ? "cat-hot" : undefined}
+                    style={{ ...U.catBtn, ...(hot ? U.catBtnHot : {}) }}
+                    onClick={() => setActiveCat(c.id)}
+                  >
+                    <img src={itemImage(iconId)} alt="" style={{ ...U.catImg, ...(on ? U.catImgOn : {}), ...(hot ? U.catImgHot : {}) }} onError={onImgError} />
+                    <span style={{ ...U.catName, ...(on ? U.catNameOn : {}), ...(hot ? U.catNameHot : {}) }}>{CAT_SHORT[c.id] || c.name_ar || c.name}</span>
+                    {on ? <span style={{ ...U.catLine, ...(hot ? U.catLineHot : {}) }} /> : <span style={{ height: 3 }} />}
                   </button>
                 );
               })}
@@ -2413,7 +2444,7 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
       list = list.map((r) => r.collector?.name ? r : { ...r, collector: r.collector_id ? { id: r.collector_id, name: names[r.collector_id] || r.collector?.name || "" } : r.collector });
       const pingIds = list.map((r) => r.id).filter(Boolean);
       if (pingIds.length) {
-        const { data: pings } = await supabase.from("order_pings").select("order_id").in("order_id", pingIds);
+        const { data: pings } = await supabase.from("order_pings").select("order_id").eq("kind", "delivered").in("order_id", pingIds);
         const deliveredIds = new Set((pings || []).map((p) => p.order_id));
         list = list.map((r) => ({ ...r, delivered: !!r.delivered || deliveredIds.has(r.id) }));
       }
@@ -2579,14 +2610,34 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
     const prev = targets.map((t) => ({ id: t.id, closed: t.closed, returned: t.returned, updated_at: t.updated_at }));
     setRows((rs) => rs.map((r) => (ids.includes(parseOrderId(r.id).parentId) ? { ...r, closed: true, returned: false, updated_at: now } : r)));
     const { error } = await supabase.from("orders").update({ closed: true, returned: false, updated_at: now }).in("id", ids);
-    setWaveBusy("");
     if (error) {
+      setWaveBusy("");
       showToast(error.message || "الأوردر ما اتقفلش.", "err");
       setRows((rs) => rs.map((r) => {
         const old = prev.find((p) => p.id === r.id);
         return old ? { ...r, closed: old.closed, returned: old.returned, updated_at: old.updated_at } : r;
       }));
-    } else showToast(`أوردر ${openRun.no} اتقفل. الأوردرات الجديدة هتتحسب لوحدها.`);
+      return;
+    }
+    const people = targets.filter((o) => !isOrderCancelled(o) && o.user_id);
+    const userIds = [...new Set(people.map((o) => o.user_id))];
+    if (userIds.length) {
+      await supabase.from("order_pings").insert(people.map((order) => ({
+        user_id: order.user_id,
+        order_id: parseOrderId(order.id).parentId || order.id,
+        kind: "closed",
+        message: CLOSE_MSG,
+      })));
+      const { error: pushErr } = await supabase.functions.invoke("send-order-ping", {
+        body: { user_ids: userIds, title: APP_NAME, message: CLOSE_MSG },
+      });
+      setWaveBusy("");
+      if (pushErr) showToast(`أوردر ${openRun.no} اتقفل. التنبيه على الموبايل ممكن يتأخر.`);
+      else showToast(`أوردر ${openRun.no} اتقفل، والناس اتنبهت إن الحلة على النار.`);
+      return;
+    }
+    setWaveBusy("");
+    showToast(`أوردر ${openRun.no} اتقفل. الأوردرات الجديدة هتتحسب لوحدها.`);
   };
 
   const cancelOfficeOrder = async (orderId) => {

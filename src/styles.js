@@ -17,7 +17,9 @@ export const globalCss = `
   .haram-pop{animation:haramShake .5s ease;}
   @keyframes shopGlow{0%,100%{box-shadow:0 0 0 3px rgba(255,90,31,.22);}50%{box-shadow:0 0 0 7px rgba(255,90,31,.08);}}
   .chip-shop{animation:shopGlow 1.7s ease-in-out infinite;}
-  @media (prefers-reduced-motion:reduce){.spin,[style*="floaty"],.bravo-pop,.haram-pop,.chip-shop{animation:none!important;}}
+  @keyframes catHot{0%,100%{box-shadow:0 0 0 3px rgba(255,90,31,.22);}50%{box-shadow:0 0 0 7px rgba(255,90,31,.08);}}
+  .cat-hot img{animation:catHot 1.7s ease-in-out infinite;}
+  @media (prefers-reduced-motion:reduce){.spin,[style*="floaty"],.bravo-pop,.haram-pop,.chip-shop,.cat-hot img{animation:none!important;}}
   ::-webkit-scrollbar{height:7px;width:7px;}::-webkit-scrollbar-thumb{background:${line};border-radius:9px;}
   .catRail::-webkit-scrollbar{display:none;}
   .catRail{scrollbar-width:none;-webkit-overflow-scrolling:touch;}
@@ -323,11 +325,15 @@ export const U = {
   catBand: { margin: "0 14px 8px", background: "#EDEDED", borderRadius: 32, padding: "14px 6px 12px" },
   catRail: { display: "flex", gap: 4, overflowX: "auto", padding: "0 6px" },
   catBtn: { flexShrink: 0, width: 68, border: "none", background: "transparent", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "0 2px", fontFamily: "'Cairo',sans-serif" },
+  catBtnHot: { width: 82 },
   catImg: { width: 52, height: 52, borderRadius: "50%", objectFit: "cover", background: "#fff", boxShadow: "0 4px 12px rgba(0,0,0,.08)", transition: "transform .18s ease" },
   catImgOn: { transform: "scale(1.12)", boxShadow: "0 6px 16px rgba(0,0,0,.14)" },
+  catImgHot: { width: 60, height: 60, border: "2.5px solid #FF5A1F", boxShadow: "0 0 0 4px rgba(255,90,31,.18)" },
   catName: { fontSize: 11, fontWeight: 700, color: "#666" },
   catNameOn: { color: night, fontWeight: 800 },
+  catNameHot: { color: "#FF5A1F", fontWeight: 800, fontSize: 11.5, textAlign: "center", lineHeight: 1.2 },
   catLine: { width: 18, height: 3, borderRadius: 3, background: night, marginTop: -2 },
+  catLineHot: { width: 28, background: "#FF5A1F" },
   grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, padding: "12px 16px 8px" },
   card: { background: "#fff", border: "none", borderRadius: 22, padding: "8px 10px 12px", textAlign: "right", cursor: "pointer", fontFamily: "'Cairo',sans-serif", color: night, boxShadow: "0 10px 28px -18px rgba(0,0,0,.35)", display: "flex", flexDirection: "column", alignItems: "stretch" },
   cardImgWrap: { height: 118, display: "grid", placeItems: "center", marginTop: -6 },

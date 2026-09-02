@@ -2,21 +2,33 @@
 export const POPULAR_ID = "popular";
 
 export const POPULAR_ITEMS = [
+  { id: "box-olive", nameAr: "علبة فول زيت زيتون" },
+  { id: "box-mash", nameAr: "علبة بيوري" },
+  { id: "foul-omelet", nameAr: "فول بيض أومليت" },
+  { id: "foul-egg", nameAr: "فول بيض مسلوق" },
   { id: "foul-plain", nameAr: "فول" },
-  { id: "foul-egg", nameAr: "فول بيض" },
-  { id: "ori-mash", nameAr: "ساندويتش بيوري" },
-  { id: "ori-mash-omelet", nameAr: "بيوري بيض مقلي", alt: "fr-mash-omelet" },
-  { id: "ori-mash-egg", nameAr: "بيوري بيض مسلوق" },
   { id: "tam-plain", nameAr: "طعمية" },
-  { id: "tam-special", nameAr: "طعمية مخصوص", alt: "tam-stuffed" },
-  { id: "app-eggpl-fried", nameAr: "علبة بيتنجان" },
-  { id: "box-plain", nameAr: "علبة فول" },
-  { id: "box-mash", nameAr: "علبة بطاطس بيوري" },
-  { id: "ori-tomato", nameAr: "جبنة طماطم" },
+  { id: "ori-tomato", nameAr: "جبنة" },
+  { id: "ori-mash-omelet", nameAr: "مهروسة أومليت", alt: "fr-mash-omelet" },
+  { id: "om-plain", nameAr: "أومليت" },
+  { id: "foul-alex", nameAr: "فول اسكندراني" },
 ];
 
+export const HIDDEN_SHOP_CATS = new Set(["green", "rolls", "meat", "omelet_plates"]);
+
+export const HIDDEN_ORIENTAL_IDS = new Set([
+  "ori-fries",
+  "ori-pomme",
+  "ori-chips",
+  "ori-mash",
+  "ori-mash-egg",
+  "ori-mash-bastr",
+  "ori-mash-omelet",
+  "ori-pomme-roumi",
+]);
+
 export const CAT_SHORT = {
-  popular: "الأكثر",
+  popular: "الأكثر طلبًا",
   foul: "فول",
   taameya: "طعمية",
   oriental: "شرقي",
