@@ -37,7 +37,7 @@ async function handlePush(event) {
 
 async function showPing(data) {
   await self.registration.showNotification(data.title || "هيئة مكافحة الجوع المش رسمية", {
-    body: data.body || "الأكل وصل — انزل خد الأوردر يا معلم",
+    body: data.body || "الأكل وصل وان خلص الفول انا مش مسؤول 😂",
     icon: "/logo.png",
     badge: "/logo.png",
     vibrate: [220, 80, 220, 80, 420],

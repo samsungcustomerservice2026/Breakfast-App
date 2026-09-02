@@ -3,7 +3,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { buildPushPayload } from "npm:@block65/webcrypto-web-push@1.0.2";
 
 const TITLE = "هيئة مكافحة الجوع المش رسمية";
-const BODY = "الأكل وصل — انزل خد الأوردر يا معلم";
+const BODY = "الأكل وصل وان خلص الفول انا مش مسؤول 😂";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",

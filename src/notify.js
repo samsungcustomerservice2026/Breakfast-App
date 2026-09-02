@@ -1,7 +1,7 @@
 import { supabase } from "./supabase.js";
 
 const TITLE = "هيئة مكافحة الجوع المش رسمية";
-const BODY = "الأكل وصل — انزل خد الأوردر يا معلم";
+const BODY = "الأكل وصل وان خلص الفول انا مش مسؤول 😂";
 
 // Public half of the VAPID pair. The private key lives in Supabase app_push_vapid.
 export const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY

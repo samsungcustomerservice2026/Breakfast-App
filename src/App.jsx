@@ -17,7 +17,7 @@ const TIER_LABELS = { shami: "شامي", balady: "بلدي", fino: "فينو", s
 const CAT_TIER_LABELS = { omelet_plates: { sm: "2 بيض", md: "3 بيض" } };
 const PRICE_NOTE = "ملحوظة: الأسعار دي مش ثابتة، والأسعار ممكن تزيد.";
 const DELIVERY_FEE = 5;
-const PING_MSG = "الأكل وصل — انزل خد الأوردر يا معلم";
+const PING_MSG = "الأكل وصل وان خلص الفول انا مش مسؤول 😂";
 const APP_NAME = "هيئة مكافحة الجوع المش رسمية";
 const TEAMS = [
   { id: "cs", label: "Customer service CS" },
@@ -542,7 +542,7 @@ function AuthScreen() {
         <Logo size="xl" className="auth-logo" />
         <p style={S.authTagline}>الجوع كافر — الحق اطلب الفطار قبل الساعة 10</p>
         <label style={S.label}>الإيميل</label>
-        <input style={S.input} type="email" value={email} placeholder="الإيميل بتاع الشغل" onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
+        <input style={S.input} type="email" value={email} placeholder="اكتب الايميل يا نجم" onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus />
         <label style={{ ...S.label, marginTop: 14 }}>الباسورد</label>
         <input style={S.input} type="password" value={pw} placeholder="••••••••" onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
         {err && <p style={S.errText}>{err}</p>}
