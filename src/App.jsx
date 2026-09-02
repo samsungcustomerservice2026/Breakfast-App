@@ -238,7 +238,12 @@ function OrderBlock({ order, title, onReorder, onPay, onFix, onCancel, tone, col
     </div>
   );
 }
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = (at = new Date()) => {
+  const y = at.getFullYear();
+  const m = String(at.getMonth() + 1).padStart(2, "0");
+  const d = String(at.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
 const prettyDate = (d) => {
   try { return new Date(d + "T00:00:00").toLocaleDateString("ar-EG", { weekday: "long", day: "numeric", month: "long" }); }
   catch { return d; }
@@ -2319,12 +2324,12 @@ function SuperUsersPanel({ showToast, meId }) {
 }
 
 function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
-  const today = todayStr();
+  const [today, setToday] = useState(() => todayStr());
   const superAdmin = isSuperAdmin(profile);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [rows, setRows] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(today);
+  const [selectedDate, setSelectedDate] = useState(() => todayStr());
   const [section, setSection] = useState("orders");
   const [mode, setMode] = useState("person");
   const [openTeam, setOpenTeam] = useState("");
@@ -2353,8 +2358,26 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
   }, [selectedDate, pickedOfficer, mode]);
 
   useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 30000);
-    return () => clearInterval(t);
+    const syncDay = () => {
+      const next = todayStr();
+      setToday((prev) => {
+        if (prev !== next) setSelectedDate((d) => (d === prev ? next : d));
+        return next;
+      });
+    };
+    const t = setInterval(() => {
+      setNowTick(Date.now());
+      syncDay();
+    }, 30000);
+    const onVis = () => { if (!document.hidden) syncDay(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", syncDay);
+    syncDay();
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("focus", syncDay);
+    };
   }, []);
 
   const load = useCallback(async (quiet = false) => {
@@ -2809,7 +2832,7 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
           {superAdmin && (
             <div style={S.chipRow}>
               {officers.map((c) => {
-                const n = dayOrders.filter((o) => o.collector_id === c.id && !isOrderReturned(o) && !isOrderCancelled(o)).length;
+                const n = dayOrders.filter((o) => o.collector_id === c.id && !o.closed && !isOrderReturned(o) && !isOrderCancelled(o)).length;
                 return (
                   <button
                     key={c.id}
@@ -2821,13 +2844,13 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
                   </button>
                 );
               })}
-              {dayOrders.some((o) => !o.collector_id && !isOrderReturned(o) && !isOrderCancelled(o)) && (
+              {dayOrders.some((o) => !o.collector_id && !o.closed && !isOrderReturned(o) && !isOrderCancelled(o)) && (
                 <button
                   type="button"
                   style={{ ...S.chip, ...(pickedOfficer === "none" ? S.chipOn : {}) }}
                   onClick={() => setPickedOfficer("none")}
                 >
-                  من غير مأمور · {dayOrders.filter((o) => !o.collector_id && !isOrderReturned(o) && !isOrderCancelled(o)).length}
+                  من غير مأمور · {dayOrders.filter((o) => !o.collector_id && !o.closed && !isOrderReturned(o) && !isOrderCancelled(o)).length}
                 </button>
               )}
             </div>
