@@ -18,8 +18,9 @@ export const SITUATIONS = [
   { id: "taameya", folder: "ta3mya", label: "Taameya sandwich", labelAr: "طعمية" },
   { id: "pay_one", folder: "if he choosed only one sandwich and going to paaay", label: "Paying with only one sandwich", labelAr: "دفع ساندوتش واحد" },
   { id: "remove", folder: "if removed something from cart", label: "Removed something from the cart", labelAr: "شال حاجة من العربية" },
-  { id: "idle", folder: "when heee delayed ordering more than 60 seconds whithout ordering", label: "Waited 60 seconds without ordering", labelAr: "قعد 60 ثانية من غير طلب" },
+  { id: "idle", folder: "when heee delayed ordering more than 60 seconds whithout ordering", label: "Waited 30 seconds without ordering", labelAr: "قعد 30 ثانية من غير طلب" },
   { id: "pay", folder: "when tending to paaay", label: "Going to pay", labelAr: "رايح يدفع" },
+  { id: "delivered", folder: "order delivered", label: "Order delivered — admin ping", labelAr: "الأكل وصل" },
 ];
 
 const okExt = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".jfif"]);
@@ -70,6 +71,14 @@ for (const sit of SITUATIONS) {
     rows.push({ situation: sit.id, path: rel, original_name: name, sort: i });
     console.log("COPY", rel, "←", name);
   }
+  if (existsSync(dest)) {
+    for (const n of await readdir(dest, { withFileTypes: true })) {
+      if (n.isFile() && !used.has(n.name)) {
+        await rm(join(dest, n.name), { force: true });
+        console.log("RM dest", sit.id, n.name);
+      }
+    }
+  }
 }
 
 const keep = new Set(SITUATIONS.map((s) => s.id));
@@ -107,6 +116,33 @@ if (url && key) {
     }
   }
   console.log(`uploaded ${ok}/${rows.length} → bucket memes`);
+
+  const keepByFolder = {};
+  for (const row of rows) {
+    const rel = row.path.replace(/^memes\//, "");
+    const slash = rel.indexOf("/");
+    if (slash < 0) continue;
+    const folder = rel.slice(0, slash);
+    const file = rel.slice(slash + 1);
+    (keepByFolder[folder] ||= new Set()).add(file);
+  }
+  let removed = 0;
+  for (const [folder, keep] of Object.entries(keepByFolder)) {
+    const { data: listed, error: listErr } = await supabase.storage.from("memes").list(folder, { limit: 1000 });
+    if (listErr) {
+      console.error("LIST", folder, listErr.message);
+      continue;
+    }
+    const extra = (listed || []).map((f) => f.name).filter((n) => n && !keep.has(n)).map((n) => `${folder}/${n}`);
+    if (!extra.length) continue;
+    const { error: rmErr } = await supabase.storage.from("memes").remove(extra);
+    if (rmErr) console.error("RM", folder, rmErr.message);
+    else {
+      removed += extra.length;
+      extra.forEach((p) => console.log("RM", p));
+    }
+  }
+  console.log(`removed ${removed} stale files from bucket memes`);
 } else {
   console.log("No SUPABASE_SERVICE_ROLE_KEY — files are in public/ for Vercel. DB seed still applies.");
 }

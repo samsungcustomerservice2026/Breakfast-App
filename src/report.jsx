@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { S } from "./styles.js";
+import { flattenOrderItems } from "./orders.js";
 
 const PIE_COLORS = ["#c0392b", "#f2b134", "#2f6b4f", "#2b2320", "#4a7c9b", "#7b5ea7", "#c45c26", "#8a7f70"];
 
@@ -73,7 +74,7 @@ export default function ReportView({ orders, officers, teamLabel }) {
   const byCat = useMemo(() => {
     const map = {};
     for (const o of orders) {
-      for (const l of o.items || []) {
+      for (const l of flattenOrderItems(o.items)) {
         const k = l.categoryName || "تاني";
         map[k] = (map[k] || 0) + Number(l.qty || 0);
       }

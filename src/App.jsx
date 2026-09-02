@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Plus, Minus, Trash2, Check, ClipboardCopy, RefreshCw, Layers, Users, Phone, RotateCcw, ChevronDown, Search, X, Home, ShoppingBag, ArrowRight, ClipboardList, Shield, LogOut, Star, CalendarDays } from "lucide-react";
+import { Plus, Minus, Trash2, Check, ClipboardCopy, RefreshCw, Layers, Users, Phone, RotateCcw, ChevronDown, Search, X, Home, ShoppingBag, ArrowRight, ClipboardList, Shield, LogOut, Star, CalendarDays, Bell, Store } from "lucide-react";
 import { supabase, configError } from "./supabase.js";
 import { S, U, accent, globalCss } from "./styles.js";
 import { itemImage, onImgError } from "./itemImages.js";
 import { afeya } from "./afeyat.js";
 import { pickSituationMeme, loadMemeCatalog } from "./memes.js";
 import { MEME_SITUATIONS } from "./memeCatalog.js";
-import { expandOrders, withNewBatch, setBatchPaid, parseOrderId, setBatchLines } from "./orders.js";
+import { expandOrders, withNewBatch, parseOrderId, flattenOrderItems, orderBatchCount, orderIsPaid, setAllBatchesPaid, setParentLines, groupOfficeRuns, runCanPing } from "./orders.js";
 import { loadPayQr, savePayQr, loadPayLink, savePayLink, loadCollectorPay, fileToDataUrl, normalizePayLink, settingsSaveHint, PAY_QR_FALLBACK, loadSetting, saveSetting } from "./settings.js";
-import { uploadAsset, setMediaRev, resolveLogoSrc, publicObject, LOGO_PATH, MEDIA_REV_KEY, MEMES_BUCKET, LOGO_BUCKET } from "./media.js";
+import { uploadAsset, setMediaRev, resolveLogoSrc, publicObject, memeUrls, LOGO_PATH, MEDIA_REV_KEY, MEMES_BUCKET, LOGO_BUCKET } from "./media.js";
+import { registerNotifyWorker, unlockAudio, showPhonePing, enablePhoneAlerts, shouldAskNotify, isIosPhone, isStandaloneApp, syncPushSubscription, notifyPermission, listenInstallPrompt, shouldAskInstall, dismissInstallAsk, canNativeInstall, promptInstall } from "./notify.js";
 import { POPULAR_ID, POPULAR_ITEMS, CAT_SHORT, CAT_ICON, POPULAR_ID_SET } from "./popular.js";
 import ReportView from "./report.jsx";
 
@@ -16,6 +17,7 @@ const TIER_LABELS = { shami: "شامي", balady: "بلدي", fino: "فينو", s
 const CAT_TIER_LABELS = { omelet_plates: { sm: "2 بيض", md: "3 بيض" } };
 const PRICE_NOTE = "ملحوظة: الأسعار دي مش ثابتة، والأسعار ممكن تزيد.";
 const DELIVERY_FEE = 5;
+const PING_MSG = "الأكل وصل — انزل خد الأوردر يا معلم";
 const APP_NAME = "هيئة مكافحة الجوع المش رسمية";
 const TEAMS = [
   { id: "cs", label: "Customer service CS" },
@@ -54,6 +56,7 @@ const isShotProof = (p) => typeof p === "string" && p.length > 8 && p !== CASH_P
 const isOrderClosed = (o) => !!o?.closed;
 const isOrderReturned = (o) => !!o?.returned && !o?.closed && !o?.cancelled;
 const isOrderCancelled = (o) => !!o?.cancelled;
+const isOrderDelivered = (o) => !!o?.delivered;
 const loadOfficers = async () => {
   const { data, error } = await supabase
     .from("profiles")
@@ -124,7 +127,49 @@ const money = (n) => {
   const shown = Math.round(x * 10) % 10 === 0 ? x.toFixed(0) : x.toFixed(1);
   return `${shown} جنيه`;
 };
-const foodOf = (items) => (items || []).reduce((s, l) => s + Number(l.price || 0) * Number(l.qty || 0), 0);
+const foodOf = (items) => flattenOrderItems(items).reduce((s, l) => s + Number(l.price || 0) * Number(l.qty || 0), 0);
+function tallyByCategory(orders) {
+  const cats = {};
+  for (const o of orders || []) for (const l of flattenOrderItems(o.items)) {
+    const c = (cats[l.categoryName] = cats[l.categoryName] || { name: l.categoryName, lines: {}, subtotal: 0 });
+    const lk = `${l.itemId}::${l.tier}`;
+    if (!c.lines[lk]) c.lines[lk] = { name: l.nameAr || l.name, tierLabel: l.tierLabel, price: l.price, qty: 0 };
+    c.lines[lk].qty += l.qty;
+    c.subtotal += l.price * l.qty;
+  }
+  return Object.values(cats).map((c) => ({ ...c, lines: Object.values(c.lines).sort((a, b) => b.qty - a.qty) }));
+}
+const dueOf = (o) => foodOf(o?.items) + DELIVERY_FEE * orderBatchCount(o?.items);
+function teamBuckets(orders) {
+  const map = {};
+  for (const o of orders || []) {
+    const k = o.department || "_none";
+    (map[k] = map[k] || []).push(o);
+  }
+  const keys = Object.keys(map).sort((a, b) => {
+    if (a === "_none") return 1;
+    if (b === "_none") return -1;
+    const ia = TEAM_ORDER.indexOf(a);
+    const ib = TEAM_ORDER.indexOf(b);
+    if (ia === -1 && ib === -1) return a.localeCompare(b);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
+  });
+  return keys.map((k) => {
+    const list = map[k];
+    const firm = list.filter((o) => !isOrderReturned(o));
+    const food = firm.reduce((s, o) => s + foodOf(o.items), 0);
+    return {
+      id: k,
+      label: teamLabel(k) || "من غير فريق",
+      orders: list,
+      food,
+      due: food + DELIVERY_FEE * firm.reduce((s, o) => s + orderBatchCount(o.items), 0),
+      unpaid: firm.filter((o) => !orderIsPaid(o)).length,
+    };
+  });
+}
 const tierLabel = (catId, tier) => CAT_TIER_LABELS[catId]?.[tier] ?? TIER_LABELS[tier] ?? "";
 const customizeLabel = (cat, tiers) => {
   if (!tiers.length) return "";
@@ -134,14 +179,18 @@ const customizeLabel = (cat, tiers) => {
   if (tiers.some((t) => t.tier === "fino" || t.tier === "shami" || t.tier === "balady")) return "اختار العيش";
   return "اختار النوع";
 };
-const Bill = ({ food }) => (
-  <div dir="rtl">
-    <div style={S.billRow}><span>الأكل</span><span>{money(food)}</span></div>
-    <div style={S.billRow}><span>توصيل</span><span>{money(DELIVERY_FEE)}</span></div>
-    <div style={S.billGrand}><span>الحساب</span><span>{money(Number(food || 0) + DELIVERY_FEE)}</span></div>
-    <p style={{ ...S.finePrint, marginTop: 10 }}>{PRICE_NOTE}</p>
-  </div>
-);
+const Bill = ({ food, deliveries = 1 }) => {
+  const trips = Math.max(1, Number(deliveries || 1));
+  const fee = DELIVERY_FEE * trips;
+  return (
+    <div dir="rtl">
+      <div style={S.billRow}><span>الأكل</span><span>{money(food)}</span></div>
+      <div style={S.billRow}><span>توصيل</span><span>{money(fee)}</span></div>
+      <div style={S.billGrand}><span>الحساب</span><span>{money(Number(food || 0) + fee)}</span></div>
+      <p style={{ ...S.finePrint, marginTop: 10 }}>{PRICE_NOTE}</p>
+    </div>
+  );
+};
 const orderStamp = (o) => o.created_at || o.updated_at || o.id;
 const sameDayOrders = (list, d) => (list || []).filter((o) => o.order_date === d).slice().sort((a, b) => String(orderStamp(a)).localeCompare(String(orderStamp(b))));
 const orderNo = (list, o) => sameDayOrders(list, o.order_date).findIndex((x) => x.id === o.id) + 1;
@@ -180,7 +229,7 @@ function OrderBlock({ order, title, onReorder, onPay, onFix, onCancel, tone, col
         {returned && onFix && !isOrderCancelled(order) && <button type="button" style={{ ...S.primaryBtn, width: "100%" }} onClick={() => onFix(order)}>عدّل وابعت تاني</button>}
         {returned && onCancel && !isOrderCancelled(order) && <button type="button" style={{ ...S.ghostBtn, width: "100%", justifyContent: "center" }} onClick={() => onCancel(order)}>ألغي الأوردر</button>}
         {!returned && !isOrderCancelled(order) && onReorder && <button type="button" style={{ ...S.primaryBtn, width: "100%" }} onClick={() => onReorder(order)}><RotateCcw size={15} /> اطلبه تاني</button>}
-        {!returned && !closed && !isOrderCancelled(order) && onPay && (
+        {!returned && !closed && !isOrderCancelled(order) && !orderIsPaid(order) && onPay && (
           <button type="button" style={{ ...S.ghostBtn, width: "100%", justifyContent: "center" }} onClick={onPay}>
             {isCashPay(order) ? "هدفع كاش — غيّر لو حابب" : isShotProof(order.pay_proof) ? "شوف كيو آر إنستاباي" : "ادفع بإنستاباي أو كاش"}
           </button>
@@ -218,6 +267,16 @@ function defaultTier(tiers) {
 function lineKey(l) {
   return l.key || `${l.categoryId || l.catId || ""}::${l.itemId}::${l.tier}`;
 }
+function mergeLines(lines) {
+  const map = new Map();
+  for (const l of lines || []) {
+    const k = lineKey(l);
+    const prev = map.get(k);
+    if (!prev) map.set(k, { ...l, key: k });
+    else map.set(k, { ...prev, qty: Number(prev.qty || 0) + Number(l.qty || 0) });
+  }
+  return [...map.values()];
+}
 function makeOrderLine(cat, it, tier, qty = 1) {
   return {
     key: `${cat.id}::${it.id}::${tier}`,
@@ -251,6 +310,7 @@ export default function App() {
 
   useEffect(() => {
     loadSetting(MEDIA_REV_KEY, "").then(setMediaRev);
+    listenInstallPrompt();
   }, []);
 
   /* auth: ignore token refresh — Chrome tab switches would otherwise remount the shop */
@@ -385,7 +445,10 @@ export default function App() {
     <div style={view === "shop" ? U.app : S.app}>
       {view === "admin" && (
         <header style={S.header}>
-          <div style={S.brandRowSm}><Logo /><span style={S.headerTitle} dir="rtl">{APP_NAME}</span></div>
+          <BrandHomeBtn onClick={leaveOffice} style={S.brandRowSm}>
+            <Logo />
+            <span style={S.headerTitle} dir="rtl">{APP_NAME}</span>
+          </BrandHomeBtn>
           <div style={S.headerRight}>
             <span style={S.hello} dir="rtl">يا {(profile.name || "").split(" ")[0] || "معلم"}{teamLabel(profile.department) ? ` · ${teamLabel(profile.department)}` : ""}{isSuperAdmin(profile) ? " · المدير" : ""}</span>
             <BackBtn onClick={leaveOffice} label="المنيو" />
@@ -607,6 +670,31 @@ function BackBtn({ onClick, label = "رجوع" }) {
   );
 }
 
+function BrandHomeBtn({ onClick, style, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="المنيو"
+      title="المنيو"
+      style={{
+        border: "none",
+        background: "transparent",
+        padding: 0,
+        margin: 0,
+        cursor: "pointer",
+        font: "inherit",
+        color: "inherit",
+        textAlign: "inherit",
+        maxWidth: "100%",
+        ...style,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function ItemDetail({ pick, onClose, onAdd }) {
   const { cat: pc, it } = pick;
   const tiers = tiersOf(it, pc.tiered);
@@ -665,7 +753,7 @@ function ItemDetail({ pick, onClose, onAdd }) {
           style={U.addCart}
           onClick={() => {
             if (tier) onAdd(pc.id, it.id, tier, n);
-            onClose();
+            else onClose();
           }}
         >
           <ShoppingBag size={16} /> ضيف للعربية
@@ -676,6 +764,30 @@ function ItemDetail({ pick, onClose, onAdd }) {
 }
 
 /* ─────────────── Shop ─────────────── */
+function InstallHomePopup({ canInstall, onSkip, onInstall }) {
+  const ios = isIosPhone();
+  return (
+    <div style={U.installScrim} role="dialog" aria-labelledby="install-title">
+      <div style={U.installCard} dir="rtl">
+        <div style={U.installIcon}><Home size={22} /></div>
+        <h2 id="install-title" style={U.installTitle}>حط الأيقونة على الشاشة الرئيسية</h2>
+        <p style={U.installText}>تفتحه من الأيقونة زي أي أبلكيشن، والجرس يوصلك حتى لو الموبايل مقفول أو فاتح حاجة تانية.</p>
+        {ios
+          ? <p style={U.installText}>من Safari: شير ← إضافة إلى الشاشة الرئيسية، وبعدين افتح من الأيقونة.</p>
+          : !canInstall
+            ? <p style={U.installText}>من قائمة المتصفح: إضافة إلى الشاشة الرئيسية.</p>
+            : null}
+        <div style={U.installActs}>
+          {canInstall && !ios
+            ? <button type="button" style={U.notifyBtn} onClick={onInstall}>أضف للأيقونات</button>
+            : <button type="button" style={U.notifyBtn} onClick={onSkip}>تمام</button>}
+          <button type="button" style={U.notifySkip} onClick={onSkip}>بعدين</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ShopView({ catalog, profile, showToast, signOut, setView }) {
   const date = todayStr();
   const [activeCat, setActiveCat] = useState(() => readShopUi(profile.id)?.activeCat || POPULAR_ID);
@@ -710,10 +822,40 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
   const pendingOrderId = useRef("");
   const idleShown = useRef(false);
   const shopDepthRef = useRef(0);
+  const [askNotify, setAskNotify] = useState(() => shouldAskNotify());
+  const [askInstall, setAskInstall] = useState(false);
+  const [canInstall, setCanInstall] = useState(() => canNativeInstall());
 
   useEffect(() => {
     writeShopUi(profile.id, { activeCat, tab, cart });
   }, [profile.id, activeCat, tab, cart]);
+
+  useEffect(() => {
+    registerNotifyWorker();
+    if (profile?.id && notifyPermission() === "granted") syncPushSubscription(profile.id);
+    const unlock = () => { unlockAudio(); window.removeEventListener("pointerdown", unlock); };
+    window.addEventListener("pointerdown", unlock);
+    const onReady = () => setCanInstall(true);
+    const onDone = () => { setAskInstall(false); setCanInstall(false); };
+    window.addEventListener("hayat-can-install", onReady);
+    window.addEventListener("hayat-installed", onDone);
+    const t = setTimeout(() => { if (shouldAskInstall()) setAskInstall(true); }, 700);
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("hayat-can-install", onReady);
+      window.removeEventListener("hayat-installed", onDone);
+      clearTimeout(t);
+    };
+  }, [profile.id]);
+
+  const turnOnAlerts = async () => {
+    const perm = await enablePhoneAlerts(profile.id);
+    setAskNotify(shouldAskNotify());
+    if (perm === "granted") showToast("تمام. هيجيلك جرس حتى لو الموبايل مقفول أو فاتح حاجة تانية.");
+    else if (perm === "denied") showToast("التنبيه مقفول من إعدادات المتصفح.", "err");
+    else if (isIosPhone() && !isStandaloneApp()) showToast("على الآيفون: شير ← إضافة إلى الشاشة الرئيسية، وبعدين افتح من الأيقونة.");
+    else showToast("المتصفح مش سامح بالتنبيه.", "err");
+  };
 
   const lookup = useMemo(() => {
     const m = {};
@@ -878,12 +1020,61 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
     const next = pickSituationMeme({ ...ctx, exceptSrc: lastMeme.current });
     if (!next.src) return false;
     lastMeme.current = next.src;
-    setBravo({ ...next, id: Date.now() });
+    const urls = memeUrls(next.src);
+    setBravo({ ...next, src: urls.local || next.src, remote: urls.remote, id: Date.now() });
     if (bravoTimer.current) clearTimeout(bravoTimer.current);
-    bravoTimer.current = setTimeout(closeBravo, 2000);
+    bravoTimer.current = setTimeout(closeBravo, 8000);
     return true;
-  }, [closeBravo]);
+  }, []);
   useEffect(() => () => { if (bravoTimer.current) clearTimeout(bravoTimer.current); }, []);
+
+  const seenPings = useRef(new Set());
+  const playPing = useCallback(async (row) => {
+    if (!row?.id || seenPings.current.has(row.id)) return;
+    seenPings.current.add(row.id);
+    const raw = String(row.meme_path || "").replace(/^\//, "");
+    const picked = raw ? `/${raw}` : pickSituationMeme({ event: "delivered" }).src;
+    if (picked) {
+      lastMeme.current = picked;
+      const urls = memeUrls(picked);
+      setBravo({ src: urls.local || picked, remote: urls.remote, shake: false, situation: "delivered", id: Date.now() });
+      if (bravoTimer.current) clearTimeout(bravoTimer.current);
+    }
+    showToast(row.message || PING_MSG);
+    showPhonePing(row.message || PING_MSG);
+    await supabase.from("order_pings").update({ read_at: new Date().toISOString() }).eq("id", row.id);
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!profile?.id) return undefined;
+    let alive = true;
+    const pull = async () => {
+      const { data } = await supabase
+        .from("order_pings")
+        .select("*")
+        .eq("user_id", profile.id)
+        .is("read_at", null)
+        .order("created_at", { ascending: false })
+        .limit(3);
+      if (!alive || !data?.length) return;
+      playPing(data[0]);
+    };
+    pull();
+    const t = setInterval(pull, 6000);
+    const ch = supabase
+      .channel(`pings-${profile.id}`)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "order_pings", filter: `user_id=eq.${profile.id}` },
+        (payload) => playPing(payload.new)
+      )
+      .subscribe();
+    return () => {
+      alive = false;
+      clearInterval(t);
+      supabase.removeChannel(ch);
+    };
+  }, [profile.id, playPing]);
 
   const ck = (c, i, t) => `${c}::${i}::${t}`;
   const add = (c, i, t) => addN(c, i, t, 1);
@@ -1032,7 +1223,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
       if (idleShown.current) return;
       idleShown.current = true;
       cheer({ event: "idle" });
-    }, 60000);
+    }, 30000);
     return () => clearTimeout(t);
   }, [tab, cartCount, cheer]);
 
@@ -1067,8 +1258,10 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
         if (error) {
           const dup = error.code === "23505" || /duplicate|unique/i.test(error.message || "");
           if (!dup) throw error;
-          const { data: existing, error: findErr } = await supabase.from("orders").select("*").eq("user_id", profile.id).eq("order_date", date).maybeSingle();
-          if (findErr || !existing) throw error;
+          const { data: existingRows, error: findErr } = await supabase.from("orders").select("*").eq("user_id", profile.id).eq("order_date", date).order("updated_at", { ascending: false });
+          if (findErr) throw error;
+          const existing = (existingRows || []).find((r) => !r.closed && !r.cancelled);
+          if (!existing) throw error;
           const patch = { ...withNewBatch(existing, items, total), collector_id: collectorId };
           const { data: updated, error: upErr } = await supabase.from("orders").update(patch).eq("id", existing.id).select("id,pay_proof").single();
           if (upErr) throw upErr;
@@ -1124,6 +1317,19 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, [goShopBack]);
+
+  const goShopHome = useCallback(() => {
+    if (payOpen && payMethod !== "cash" && !proofDone) {
+      showToast("تقدر تدفع بعدين من أرشيفي.");
+    }
+    closeBravo();
+    setPick(null);
+    setPayOpen(false);
+    abandonReturnedEdit();
+    setTab("menu");
+    setQ("");
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { window.scrollTo(0, 0); }
+  }, [payOpen, payMethod, proofDone, showToast, closeBravo, abandonReturnedEdit]);
 
   const requestShopBack = () => {
     if (shopDepthRef.current > 0 && window.history.state?.shop) {
@@ -1183,10 +1389,10 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
   return (
     <div style={U.shell} dir="rtl">
       <header style={U.sticky}>
-        <div style={U.brandLock}>
+        <BrandHomeBtn onClick={goShopHome} style={U.brandLock}>
           <Logo size="lock" />
-          <h1 style={U.brandName}>{APP_NAME}</h1>
-        </div>
+          <span style={U.brandName}>{APP_NAME}</span>
+        </BrandHomeBtn>
         <div style={U.stickyRow}>
           <span style={U.stickyHello}>يا {firstName}{teamLabel(profile.department) ? ` · ${teamLabel(profile.department)}` : ""}</span>
           <div style={U.stickyBtns}>
@@ -1198,6 +1404,19 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
             </button>
           </div>
         </div>
+        {askNotify && !askInstall && (
+          <div style={U.notifyBar}>
+            <div style={U.notifyText}>
+              {isIosPhone() && !isStandaloneApp()
+                ? "على الآيفون: شير ← إضافة إلى الشاشة الرئيسية، وبعدين فعّل الجرس."
+                : "فعّل جرس الموبايل — يوصلك حتى لو الشاشة مقفولة أو فاتح حاجة تانية."}
+            </div>
+            <div style={U.notifyActs}>
+              <button type="button" style={U.notifyBtn} onClick={turnOnAlerts}>فعّل التنبيه</button>
+              <button type="button" style={U.notifySkip} onClick={() => setAskNotify(false)}>بعدين</button>
+            </div>
+          </div>
+        )}
       </header>
 
       {tab === "history" ? (
@@ -1215,7 +1434,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
                     key={o.id}
                     order={o}
                     title={`${o.name}${teamLabel(o.department) ? ` · ${teamLabel(o.department)}` : ""}`}
-                    onPay={o.order_date === date ? () => openPay(profile.id, o) : undefined}
+                    onPay={!o.paid && o.order_date === date ? () => openPay(profile.id, o) : undefined}
                   />
                 ))}
               <button type="button" style={{ ...S.primaryBtn, width: "100%" }} onClick={() => setView("admin")}>افتح المكتب</button>
@@ -1235,7 +1454,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
                   onReorder={reorder}
                   onFix={beginReturnedEdit}
                   onCancel={cancelReturnedOrder}
-                  onPay={g.date === date ? () => openPay(o.collector_id, o) : undefined}
+                  onPay={!orderIsPaid(o) && g.date === date ? () => openPay(o.collector_id, o) : undefined}
                 />
               ))}
             </div>
@@ -1359,7 +1578,16 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
         </div>
       )}
 
-      {pick && <ItemDetail pick={pick} onClose={requestShopBack} onAdd={addN} />}
+      {pick && (
+        <ItemDetail
+          pick={pick}
+          onClose={requestShopBack}
+          onAdd={(c, i, t, n) => {
+            addN(c, i, t, n);
+            setPick(null);
+          }}
+        />
+      )}
 
       {bravo?.src && (
         <div style={S.bravoScrim} onClick={closeBravo} role="presentation">
@@ -1368,14 +1596,16 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
               src={bravo.src}
               alt=""
               style={S.bravoImg}
+              onLoad={() => {
+                if (bravoTimer.current) clearTimeout(bravoTimer.current);
+                bravoTimer.current = setTimeout(closeBravo, bravo.situation === "delivered" ? 5000 : 2800);
+              }}
               onError={(e) => {
-                if (e.currentTarget.dataset.tried) {
-                  closeBravo();
-                  return;
+                const remote = bravo.remote;
+                if (remote && !e.currentTarget.dataset.tried) {
+                  e.currentTarget.dataset.tried = "1";
+                  e.currentTarget.src = remote;
                 }
-                e.currentTarget.dataset.tried = "1";
-                const p = String(bravo.src || "").replace(/^\//, "").replace(/^memes\//, "").split("?")[0];
-                e.currentTarget.src = publicObject(MEMES_BUCKET, p);
               }}
             />
           </div>
@@ -1454,25 +1684,47 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
           </div>
         </div>
       )}
+      {askInstall && !payOpen && !cartOpen && !bravo?.src && (
+        <InstallHomePopup
+          canInstall={canInstall}
+          onSkip={() => { dismissInstallAsk(); setAskInstall(false); }}
+          onInstall={async () => {
+            const out = await promptInstall();
+            if (out === "accepted") {
+              dismissInstallAsk();
+              setAskInstall(false);
+              showToast("تمام. الأيقونة على الشاشة الرئيسية.");
+              return;
+            }
+            if (out === "unavailable") showToast("من قائمة المتصفح: إضافة إلى الشاشة الرئيسية.");
+          }}
+        />
+      )}
     </div>
   );
 }
 
 /* ─────────────── Admin ─────────────── */
-function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onReturn, onClose, onCancelOrder, onSaveItems, hideCollector }) {
+function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onReturn, onCancelOrder, onSaveItems, hideCollector }) {
   const [open, setOpen] = useState(false);
   const [addQ, setAddQ] = useState("");
   const [addPick, setAddPick] = useState(null);
   const extra = siblings.filter((x) => x.user_id === o.user_id).length > 1
     ? ` · ${orderNo(siblings.filter((x) => x.user_id === o.user_id), o)}`
     : "";
-  const due = money(foodOf(o.items) + DELIVERY_FEE);
-  const itemCount = (o.items || []).reduce((s, l) => s + Number(l.qty || 0), 0);
+  const lines = mergeLines(flattenOrderItems(o.items));
+  const trips = orderBatchCount(o.items);
+  const due = money(dueOf(o));
+  const itemCount = lines.reduce((s, l) => s + Number(l.qty || 0), 0);
   const collectorLine = o.collectorName ? `نازل على ${o.collectorName}` : "من غير مأمور";
   const returned = isOrderReturned(o);
   const closed = isOrderClosed(o);
+  const cancelled = isOrderCancelled(o);
+  const delivered = isOrderDelivered(o);
+  const paid = orderIsPaid(o);
+  const canEdit = canManage && !delivered && !cancelled;
   const needle = addQ.trim().toLowerCase();
-  const addHits = !canManage || !needle ? [] : (catalog || []).flatMap((cat) => (
+  const addHits = !canEdit || !needle ? [] : (catalog || []).flatMap((cat) => (
     (cat.items || []).filter((it) => `${it.name_ar || ""} ${it.name || ""}`.toLowerCase().includes(needle))
       .slice(0, 8)
       .map((it) => ({ cat, it }))
@@ -1480,7 +1732,7 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
 
   const bump = (key, d) => {
     const next = [];
-    for (const l of o.items || []) {
+    for (const l of lines) {
       const k = lineKey(l);
       if (k !== key) { next.push(l); continue; }
       const qty = Number(l.qty || 0) + d;
@@ -1492,17 +1744,17 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
 
   const addFromMenu = (cat, it, tier) => {
     const line = makeOrderLine(cat, it, tier, 1);
-    const exists = (o.items || []).find((l) => lineKey(l) === line.key);
+    const exists = lines.find((l) => lineKey(l) === line.key);
     const next = exists
-      ? (o.items || []).map((l) => (lineKey(l) === line.key ? { ...l, qty: Number(l.qty || 0) + 1 } : l))
-      : [...(o.items || []), line];
+      ? lines.map((l) => (lineKey(l) === line.key ? { ...l, qty: Number(l.qty || 0) + 1 } : l))
+      : [...lines, line];
     onSaveItems(o.id, next);
     setAddPick(null);
     setAddQ("");
   };
 
   return (
-    <div style={{ ...S.orderRow, ...(o.paid ? S.orderRowPaid : returned ? S.orderRowReturned : {}) }}>
+    <div style={{ ...S.orderRow, ...(paid ? S.orderRowPaid : returned ? S.orderRowReturned : {}) }}>
       <button type="button" style={S.orderRowMain} onClick={() => setOpen((v) => !v)}>
         <div style={{ minWidth: 0, textAlign: "right" }}>
           <div style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }}>{o.name}{extra}</div>
@@ -1510,12 +1762,12 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
             {teamLabel(o.department) || "من غير فريق"}
             {" · "}
             {itemCount} صنف
-            {closed ? " · مقفول" : returned ? " · راجع للعميل" : isCashPay(o) ? " · كاش" : isShotProof(o.pay_proof) ? " · إنستاباي" : ""}
+            {closed ? " · مقفول" : returned ? " · راجع للعميل" : delivered ? " · الأكل وصل" : isCashPay(o) ? " · كاش" : isShotProof(o.pay_proof) ? " · إنستاباي" : ""}
           </div>
           {!hideCollector && <div style={S.collectorTag}>{collectorLine}</div>}
         </div>
         <div style={{ flexShrink: 0, textAlign: "left" }}>
-          <div style={{ ...S.orderRowPrice, ...(o.paid ? S.orderRowPricePaid : {}) }}>{due}</div>
+          <div style={{ ...S.orderRowPrice, ...(paid ? S.orderRowPricePaid : {}) }}>{due}</div>
           <div style={S.orderRowHint}>{open ? "اقفل التفاصيل" : "التفاصيل"}</div>
         </div>
       </button>
@@ -1525,12 +1777,12 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
           {o.phone
             ? <a href={`tel:${o.phone.replace(/\s/g, "")}`} style={S.payPhoneLink} dir="ltr"><Phone size={12} /> {o.phone}</a>
             : <div style={S.payPhone}>مفيش موبايل</div>}
-          {(o.items || []).map((l) => {
+          {lines.map((l) => {
             const k = lineKey(l);
             return (
               <div key={k} style={S.personLine}>
                 <span style={{ flex: 1 }}>{l.qty}× {l.nameAr || l.name}{l.tierLabel ? <> <span style={S.tierTag}>{l.tierLabel}</span></> : null}</span>
-                {canManage && (
+                {canEdit && (
                   <span style={S.orderLineActs}>
                     <button type="button" style={S.stepBtn} onClick={() => bump(k, -1)} aria-label="ناقص"><Minus size={13} /></button>
                     <button type="button" style={S.stepBtn} onClick={() => bump(k, 1)} aria-label="زيادة"><Plus size={13} /></button>
@@ -1541,7 +1793,7 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
               </div>
             );
           })}
-          {canManage && (
+          {canEdit && (
             <div style={S.orderAddBox}>
               <div style={S.payEditTitle}>ضيف صنف</div>
               <input
@@ -1587,7 +1839,7 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
               })}
             </div>
           )}
-          <Bill food={foodOf(o.items)} />
+          <Bill food={foodOf(o.items)} deliveries={trips} />
           {isShotProof(o.pay_proof) ? (
             <div style={S.proofBox}>
               <div style={S.payEditTitle}>سكرين التحويل</div>
@@ -1603,8 +1855,8 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
           <>
             <span style={S.orderClosedStamp}>مقفول</span>
             <div style={S.orderRowActs}>
-              {canManage && <button type="button" style={S.ghostBtn} onClick={() => onCancelOrder(o.id)}>ألغي الأوردر</button>}
-              {o.paid ? <span style={S.paidStamp}><Check size={13} /> دافع</span> : (
+              {canEdit && <button type="button" style={S.ghostBtn} onClick={() => onCancelOrder(o.id)}>ألغي الأوردر</button>}
+              {paid ? <span style={S.paidStamp}><Check size={13} /> دافع</span> : (
                 <button type="button" style={S.paidMark} onClick={() => onMarkPaid(o.id)}>
                   <Check size={13} /> علّم دافع
                 </button>
@@ -1614,22 +1866,22 @@ function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onRe
         ) : returned ? (
           <>
             <span style={S.orderBackStamp}>راجع للعميل</span>
-            <button type="button" style={S.ghostBtn} onClick={() => onClose(o.id)}>اقفل الأوردر</button>
           </>
         ) : (
           <>
-            {o.paid ? (
+            {paid ? (
               <span style={S.paidStamp}><Check size={13} /> دافع</span>
+            ) : delivered ? (
+              <span style={S.orderDeliveredStamp}>الأكل وصل</span>
             ) : (
               <span style={S.paidWait}>لسه</span>
             )}
             <div style={S.orderRowActs}>
-              {canManage && <button type="button" style={S.ghostBtn} onClick={() => onCancelOrder(o.id)}>ألغي الأوردر</button>}
-              {!o.paid && (
+              {canEdit && <button type="button" style={S.ghostBtn} onClick={() => onCancelOrder(o.id)}>ألغي الأوردر</button>}
+              {!paid && !delivered && (
                 <button type="button" style={S.ghostBtn} onClick={() => onReturn(o.id)}>رجّع للعميل</button>
               )}
-              <button type="button" style={S.ghostBtn} onClick={() => onClose(o.id)}>اقفل الأوردر</button>
-              {!o.paid && (
+              {!paid && (
                 <button type="button" style={S.paidMark} onClick={() => onMarkPaid(o.id)}>
                   <Check size={13} /> علّم دافع
                 </button>
@@ -2084,6 +2336,8 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
   const [logoBusy, setLogoBusy] = useState(false);
   const [memeBusy, setMemeBusy] = useState(false);
   const [memeSit, setMemeSit] = useState("second_item");
+  const [waveBusy, setWaveBusy] = useState("");
+  const [nowTick, setNowTick] = useState(() => Date.now());
   const [officers, setOfficers] = useState([]);
   const qrInput = useRef(null);
   const logoInput = useRef(null);
@@ -2097,6 +2351,11 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
   useEffect(() => {
     setOpenTeam("");
   }, [selectedDate, pickedOfficer, mode]);
+
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) { setLoading(true); setError(null); }
@@ -2120,16 +2379,22 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
         ({ data, error } = await fallback);
       }
       if (error) throw error;
-      let expanded = expandOrders(data || []);
-      const missingIds = [...new Set(expanded.filter((r) => r.collector_id && !r.collector?.name).map((r) => r.collector_id))];
+      let list = data || [];
+      const missingIds = [...new Set(list.filter((r) => r.collector_id && !r.collector?.name).map((r) => r.collector_id))];
       if (missingIds.length) {
         const { data: cols } = await supabase.from("profiles").select("id,name").in("id", missingIds);
         const cmap = Object.fromEntries((cols || []).map((c) => [c.id, c]));
-        expanded = expanded.map((r) => (r.collector?.name ? r : { ...r, collector: cmap[r.collector_id] || r.collector }));
+        list = list.map((r) => (r.collector?.name ? r : { ...r, collector: cmap[r.collector_id] || r.collector }));
       }
       const names = Object.fromEntries(staff.map((c) => [c.id, c.name]));
-      expanded = expanded.map((r) => r.collector?.name ? r : { ...r, collector: r.collector_id ? { id: r.collector_id, name: names[r.collector_id] || r.collector?.name || "" } : r.collector });
-      setRows(expanded);
+      list = list.map((r) => r.collector?.name ? r : { ...r, collector: r.collector_id ? { id: r.collector_id, name: names[r.collector_id] || r.collector?.name || "" } : r.collector });
+      const pingIds = list.map((r) => r.id).filter(Boolean);
+      if (pingIds.length) {
+        const { data: pings } = await supabase.from("order_pings").select("order_id").in("order_id", pingIds);
+        const deliveredIds = new Set((pings || []).map((p) => p.order_id));
+        list = list.map((r) => ({ ...r, delivered: !!r.delivered || deliveredIds.has(r.id) }));
+      }
+      setRows(list);
     } catch (e) { if (!quiet) setError(e.message || "الأوردرات وقفت في الزحمة."); }
     finally { if (!quiet) setLoading(false); }
   }, [superAdmin, profile.id]);
@@ -2149,6 +2414,7 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
         phone: r.profiles?.phone || "",
         department: r.profiles?.department || "",
         collectorName: r.collector?.name || "",
+        paid: orderIsPaid(r),
       }))
       .sort((a, b) => a.name.localeCompare(b.name, "ar") || String(orderStamp(a)).localeCompare(String(orderStamp(b)))),
     [rows, selectedDate]
@@ -2161,72 +2427,26 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
       : dayOrders.filter((o) => o.collector_id === profile.id);
     return office.filter((o) => !isOrderReturned(o) && !isOrderCancelled(o));
   }, [dayOrders, superAdmin, profile.id, pickedOfficer]);
-  const firmOrders = visibleOrders;
-  const dayFood = useMemo(() => firmOrders.reduce((s, o) => s + foodOf(o.items), 0), [firmOrders]);
-  const unpaid = useMemo(() => firmOrders.filter((o) => !o.paid).length, [firmOrders]);
-  const dayDue = dayFood + DELIVERY_FEE * firmOrders.length;
+  const officeRuns = useMemo(() => groupOfficeRuns(visibleOrders), [visibleOrders]);
+  const openRun = useMemo(() => officeRuns.find((r) => !r.closed) || null, [officeRuns]);
+  const firmOrders = openRun?.orders || [];
+  const unpaid = useMemo(() => firmOrders.filter((o) => !orderIsPaid(o)).length, [firmOrders]);
+  const dayDue = useMemo(() => firmOrders.reduce((s, o) => s + dueOf(o), 0), [firmOrders]);
 
-  const byCategory = useMemo(() => {
-    const cats = {};
-    for (const o of firmOrders) for (const l of o.items) {
-      const c = (cats[l.categoryName] = cats[l.categoryName] || { name: l.categoryName, lines: {}, subtotal: 0 });
-      const lk = `${l.itemId}::${l.tier}`;
-      if (!c.lines[lk]) c.lines[lk] = { name: l.nameAr || l.name, tierLabel: l.tierLabel, price: l.price, qty: 0 };
-      c.lines[lk].qty += l.qty; c.subtotal += l.price * l.qty;
-    }
-    return Object.values(cats).map((c) => ({ ...c, lines: Object.values(c.lines).sort((a, b) => b.qty - a.qty) }));
-  }, [firmOrders]);
-
-  const byTeam = useMemo(() => {
-    const map = {};
-    for (const o of visibleOrders) {
-      const k = o.department || "_none";
-      (map[k] = map[k] || []).push(o);
-    }
-    const keys = Object.keys(map).sort((a, b) => {
-      if (a === "_none") return 1;
-      if (b === "_none") return -1;
-      const ia = TEAM_ORDER.indexOf(a);
-      const ib = TEAM_ORDER.indexOf(b);
-      if (ia === -1 && ib === -1) return a.localeCompare(b);
-      if (ia === -1) return 1;
-      if (ib === -1) return -1;
-      return ia - ib;
-    });
-    return keys.map((k) => {
-      const orders = map[k];
-      const firm = orders.filter((o) => !isOrderReturned(o));
-      const food = firm.reduce((s, o) => s + foodOf(o.items), 0);
-      return {
-        id: k,
-        label: teamLabel(k) || "من غير فريق",
-        orders,
-        food,
-        due: food + DELIVERY_FEE * firm.length,
-        unpaid: firm.filter((o) => !o.paid).length,
-      };
-    });
-  }, [visibleOrders]);
+  const byCategory = useMemo(() => tallyByCategory(firmOrders), [firmOrders]);
 
   const markPaid = async (orderId) => {
-    const current = rows.find((r) => r.id === orderId);
-    if (current?.paid || isOrderReturned(current)) return;
+    const { parentId } = parseOrderId(orderId);
+    const current = rows.find((r) => parseOrderId(r.id).parentId === parentId);
+    if (!current || orderIsPaid(current) || isOrderReturned(current)) return;
     if (!window.confirm("هتعلّم الأوردر دافع؟ الخطوة دي مش هترجع.")) return;
-    setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: true } : r)));
-    const { parentId, batchId } = parseOrderId(orderId);
-    let error;
-    if (!batchId) {
-      ({ error } = await supabase.from("orders").update({ paid: true }).eq("id", parentId));
-    } else {
-      const { data, error: readErr } = await supabase.from("orders").select("items").eq("id", parentId).single();
-      if (readErr) error = readErr;
-      else {
-        const patch = setBatchPaid(data.items, batchId, true);
-        ({ error } = await supabase.from("orders").update(patch).eq("id", parentId));
-      }
-    }
-    if (error) { showToast("الفلوس ما اتعلّمتش.", "err"); setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: false } : r))); }
-    else showToast("اتعلّم دافع.");
+    const patch = setAllBatchesPaid(current.items, true);
+    setRows((rs) => rs.map((r) => (parseOrderId(r.id).parentId === parentId ? { ...r, paid: true, items: patch.items } : r)));
+    const { error } = await supabase.from("orders").update({ ...patch, paid: true }).eq("id", parentId);
+    if (error) {
+      showToast("الفلوس ما اتعلّمتش.", "err");
+      setRows((rs) => rs.map((r) => (parseOrderId(r.id).parentId === parentId ? { ...r, paid: current.paid, items: current.items } : r)));
+    } else showToast("اتعلّم دافع.");
   };
 
   const patchParent = async (orderId, patch, revert) => {
@@ -2243,19 +2463,10 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
 
   const returnOrder = async (orderId) => {
     const current = rows.find((r) => r.id === orderId);
-    if (!current || isOrderClosed(current) || current.paid || isOrderReturned(current)) return;
-    if (!window.confirm("هترجّع الأوردر للعميل يعدّله؟")) return;
+    if (!current || isOrderClosed(current) || current.paid || isOrderReturned(current) || isOrderDelivered(current)) return;
+    if (!window.confirm("هترجّع الأوردر كله للعميل يعدّله؟")) return;
     if (await patchParent(orderId, { returned: true, pay_proof: null }, { returned: false, pay_proof: current.pay_proof })) {
       showToast("الأوردر رجع للعميل واختفى من المكتب.");
-    }
-  };
-
-  const closeOrder = async (orderId) => {
-    const current = rows.find((r) => r.id === orderId);
-    if (!current || isOrderClosed(current)) return;
-    if (!window.confirm("هتقفل الأوردر؟ بعد كده مش هترجّعه للعميل.")) return;
-    if (await patchParent(orderId, { closed: true, returned: false }, { closed: false, returned: current.returned })) {
-      showToast("الأوردر اتقفل.");
     }
   };
 
@@ -2265,44 +2476,108 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
       showToast("مش هتسيب الأوردر فاضي. ألغي الأوردر لو مش عايزه.", "err");
       return;
     }
-    const current = rows.find((r) => r.id === orderId);
-    if (!current || isOrderCancelled(current)) return;
-    const { parentId, batchId } = parseOrderId(orderId);
+    const { parentId } = parseOrderId(orderId);
+    const current = rows.find((r) => parseOrderId(r.id).parentId === parentId);
+    if (!current || isOrderCancelled(current) || isOrderDelivered(current)) return;
     const prevItems = current.items;
     const prevTotal = current.total;
-    const nextTotal = foodOf(lines) + DELIVERY_FEE;
-    setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, items: lines, total: nextTotal } : r)));
-    let patch;
-    if (!batchId) {
-      patch = { items: lines, total: nextTotal, updated_at: new Date().toISOString() };
-    } else {
-      const { data, error } = await supabase.from("orders").select("items").eq("id", parentId).single();
-      if (error) {
-        showToast(error.message || "الأصناف ما اتحدثتش.", "err");
-        setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, items: prevItems, total: prevTotal } : r)));
-        return;
-      }
-      patch = setBatchLines(data.items, batchId, lines, DELIVERY_FEE);
-    }
+    const patch = setParentLines(current.items, lines, DELIVERY_FEE);
+    setRows((rs) => rs.map((r) => (parseOrderId(r.id).parentId === parentId ? { ...r, ...patch } : r)));
     const { error } = await supabase.from("orders").update(patch).eq("id", parentId);
     if (error) {
       showToast(error.message || "الأصناف ما اتحدثتش.", "err");
-      setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, items: prevItems, total: prevTotal } : r)));
+      setRows((rs) => rs.map((r) => (parseOrderId(r.id).parentId === parentId ? { ...r, items: prevItems, total: prevTotal } : r)));
     }
+  };
+
+  const pingRun = async (run) => {
+    if (!runCanPing(run)) {
+      showToast(run?.closed ? "عدّى 10 دقايق على قفل الأوردر." : "مفيش أوردر.");
+      return;
+    }
+    const targets = (run.orders || []).filter((o) => !isOrderCancelled(o) && !isOrderReturned(o));
+    if (!targets.length) {
+      showToast("مفيش حد في الأوردر ده يتنبّه.");
+      return;
+    }
+    if (!window.confirm(`هتنبّه ${targets.length === 1 ? "الزبون" : `${targets.length} ناس`} في أوردر ${run.no} إن الأكل وصل؟`)) return;
+    setWaveBusy("ping");
+    try {
+      await loadMemeCatalog();
+      const picked = pickSituationMeme({ event: "delivered" });
+      const meme_path = String(picked.src || "").replace(/^\//, "") || null;
+      const payload = targets.map((order) => ({
+        user_id: order.user_id,
+        order_id: parseOrderId(order.id).parentId || order.id,
+        kind: "delivered",
+        meme_path,
+        message: PING_MSG,
+      }));
+      const { error } = await supabase.from("order_pings").insert(payload);
+      if (error) showToast(error.message || "التنبيه ما اتبعتش.", "err");
+      else {
+        const ids = new Set(payload.map((p) => p.order_id));
+        setRows((rs) => rs.map((r) => (ids.has(parseOrderId(r.id).parentId) ? { ...r, delivered: true } : r)));
+        const { error: pushErr } = await supabase.functions.invoke("send-order-ping", {
+          body: {
+            user_ids: [...new Set(payload.map((p) => p.user_id))],
+            title: APP_NAME,
+            message: PING_MSG,
+          },
+        });
+        if (pushErr) showToast(`اتبعت تنبيه لأوردر ${run.no}. الجرس على الموبايل المقفل ممكن يتأخر.`);
+        else showToast(`اتبعت تنبيه لأوردر ${run.no}.`);
+      }
+    } finally { setWaveBusy(""); }
+  };
+
+  const closeOpenRun = async () => {
+    if (!openRun) {
+      showToast("مفيش أوردر مفتوح يتقفل.");
+      return;
+    }
+    const sameOffice = (r) => {
+      if (r.order_date !== selectedDate || r.closed || r.cancelled) return false;
+      if (superAdmin) {
+        if (!pickedOfficer) return false;
+        return pickedOfficer === "none" ? !r.collector_id : r.collector_id === pickedOfficer;
+      }
+      return r.collector_id === profile.id;
+    };
+    const targets = rows.filter(sameOffice);
+    if (!targets.length) {
+      showToast("مفيش أوردر مفتوح يتقفل.");
+      return;
+    }
+    if (!window.confirm(`هتقفل أوردر ${openRun.no} كله؟ بعد كده أي أوردر جديد هيتسجل أوردر ${openRun.no + 1}.`)) return;
+    setWaveBusy("close");
+    const ids = targets.map((t) => parseOrderId(t.id).parentId || t.id);
+    const now = new Date().toISOString();
+    const prev = targets.map((t) => ({ id: t.id, closed: t.closed, returned: t.returned, updated_at: t.updated_at }));
+    setRows((rs) => rs.map((r) => (ids.includes(parseOrderId(r.id).parentId) ? { ...r, closed: true, returned: false, updated_at: now } : r)));
+    const { error } = await supabase.from("orders").update({ closed: true, returned: false, updated_at: now }).in("id", ids);
+    setWaveBusy("");
+    if (error) {
+      showToast(error.message || "الأوردر ما اتقفلش.", "err");
+      setRows((rs) => rs.map((r) => {
+        const old = prev.find((p) => p.id === r.id);
+        return old ? { ...r, closed: old.closed, returned: old.returned, updated_at: old.updated_at } : r;
+      }));
+    } else showToast(`أوردر ${openRun.no} اتقفل. الأوردرات الجديدة هتتحسب لوحدها.`);
   };
 
   const cancelOfficeOrder = async (orderId) => {
     if (!superAdmin) return;
     const current = rows.find((r) => r.id === orderId);
-    if (!current || isOrderCancelled(current)) return;
-    if (!window.confirm("هتلغي الأوردر؟ العميل هيشوف إنه اتلغى، ومش هيرجع للمكتب.")) return;
+    if (!current || isOrderCancelled(current) || isOrderDelivered(current)) return;
+    if (!window.confirm("هتلغي الأوردر كله؟ العميل هيشوف إنه اتلغى، ومش هيرجع للمكتب.")) return;
     if (await patchParent(orderId, { cancelled: true, returned: false }, { cancelled: false, returned: current.returned })) {
       showToast("الأوردر اتلغى.");
     }
   };
 
   const buildText = () => {
-    const lines = [`أوردر المحل — ${prettyDate(selectedDate)}`, ""];
+    const lines = [`أوردر المحل${openRun ? ` ${openRun.no}` : ""} — ${prettyDate(selectedDate)}`, ""];
     if (!byCategory.length) {
       lines.push("مفيش أوردر.");
       return lines.join("\n");
@@ -2316,17 +2591,21 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
     });
     return `${lines.join("\n").trim()}\n`;
   };
-  const copyList = async () => { try { await navigator.clipboard.writeText(buildText()); showToast("الأوردر اتنسخ. روح اقراه للمحل."); } catch { showToast("النسخ فشل — جرّب التصدير.", "err"); } };
+  const copyList = async () => {
+    if (!firmOrders.length) { showToast("مفيش أوردر مفتوح ينسخ.", "err"); return; }
+    try { await navigator.clipboard.writeText(buildText()); showToast(`أوردر ${openRun.no} اتنسخ. روح اقراه للمحل.`); } catch { showToast("النسخ فشل — جرّب التصدير.", "err"); }
+  };
   const exportList = () => {
+    if (!firmOrders.length) { showToast("مفيش أوردر مفتوح يتصدّر.", "err"); return; }
     try {
       const b = new Blob([`\uFEFF${buildText()}`], { type: "text/plain;charset=utf-8" });
       const u = URL.createObjectURL(b);
       const a = document.createElement("a");
       a.href = u;
-      a.download = `hayat-mokafhet-elgoo-${selectedDate}.txt`;
+      a.download = `hayat-mokafhet-elgoo-${selectedDate}-order-${openRun.no}.txt`;
       a.click();
       URL.revokeObjectURL(u);
-      showToast("ملف أوردر المحل نزل.");
+      showToast(`ملف أوردر ${openRun.no} نزل.`);
     } catch { showToast("التصدير فشل — جرّب انسخ.", "err"); }
   };
 
@@ -2399,6 +2678,31 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
     } catch (err) {
       showToast(settingsSaveHint(err), "err");
     } finally { setLinkBusy(false); }
+  };
+
+  const runActs = (run) => {
+    const canPing = runCanPing(run, nowTick);
+    const canClose = !run.closed;
+    return (
+      <div style={S.runActs}>
+        <button
+          type="button"
+          style={{ ...S.pingMark, ...(!canPing || waveBusy ? S.pingMarkOff : {}) }}
+          disabled={!canPing || !!waveBusy}
+          onClick={() => pingRun(run)}
+        >
+          <Bell size={13} /> {waveBusy === "ping" ? "ثواني…" : `الأكل وصل · أوردر ${run.no}`}
+        </button>
+        <button
+          type="button"
+          style={{ ...S.ghostBtn, ...(!canClose || waveBusy ? S.pingMarkOff : {}) }}
+          disabled={!canClose || !!waveBusy}
+          onClick={closeOpenRun}
+        >
+          {waveBusy === "close" ? "ثواني…" : canClose ? `اقفل أوردر ${run.no}` : "اقفل الأوردر"}
+        </button>
+      </div>
+    );
   };
 
   if (loading && section === "orders") return (<div style={S.adminPad}><div style={S.loadPulse}><Layers size={34} strokeWidth={1.5} /></div><p style={S.loadText} dir="rtl">بنلمّ أوردرات العيال…</p></div>);
@@ -2533,15 +2837,22 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
           )}
 
           <div style={S.adminStatBar}>
-            <span>{visibleOrders.length} {visibleOrders.length === 1 ? "أوردر" : "أوردرات"}</span>
-            <span>{unpaid ? `${unpaid} لسه ما دفعوش` : visibleOrders.length ? "كلهم دفعوا" : (superAdmin ? "مفيش أوردرات في اليوم ده" : "مفيش أوردرات نازلة عليك")}</span>
-            <span>المفروض يتجمع {money(dayDue)}</span>
+            <span>{openRun ? `أوردر ${openRun.no} مفتوح · ${firmOrders.length} ${firmOrders.length === 1 ? "زبون" : "ناس"}` : "مفيش أوردر مفتوح"}</span>
+            <span>{unpaid ? `${unpaid} لسه ما دفعوش` : firmOrders.length ? "كلهم دفعوا" : (visibleOrders.length ? "الأوردرات اللي فاتت مقفولة" : (superAdmin ? "مفيش أوردرات في اليوم ده" : "مفيش أوردرات نازلة عليك"))}</span>
+            {!!firmOrders.length && <span>المفروض يتجمع {money(dayDue)}</span>}
           </div>
 
           <div style={S.chipRow}>
             <button type="button" style={{ ...S.chip, ...(mode === "person" ? S.chipOn : {}) }} onClick={() => setMode("person")}>بالناس</button>
             <button type="button" style={{ ...S.chip, ...(mode === "team" ? S.chipOn : {}) }} onClick={() => setMode("team")}>بالفرق</button>
-            <button type="button" style={{ ...S.chip, ...(mode === "full" ? S.chipOn : {}) }} onClick={() => setMode("full")}>أوردر المحل</button>
+            <button
+              type="button"
+              className={mode === "full" ? undefined : "chip-shop"}
+              style={{ ...S.chipShop, ...(mode === "full" ? S.chipShopOn : {}) }}
+              onClick={() => setMode("full")}
+            >
+              <Store size={14} /> أوردر المحل
+            </button>
           </div>
           <div style={S.adminActions}>
             <button style={S.primaryBtn} onClick={copyList}><ClipboardCopy size={16} /> انسخ للمحل</button>
@@ -2549,71 +2860,103 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
           </div>
 
           {mode === "full" ? (
-            <div style={S.fullWrap}>
-              {byCategory.map((c) => (
-                <div key={c.name} style={S.catBlock}>
-                  <div style={{ ...S.catBlockHead, fontFamily: "'Cairo',sans-serif" }}><span>{c.name}</span><span style={S.catBlockSub}>{money(c.subtotal)}</span></div>
-                  {c.lines.map((l, i) => (
-                    <div key={i} style={S.tallyLineLight}>
-                      <span style={S.tallyQtyDark}>{l.qty}×</span>
-                      <span style={{ flex: 1, fontFamily: "'Cairo',sans-serif" }}>{l.name}{l.tierLabel ? <> <span style={S.tierTag}>{l.tierLabel}</span></> : null}</span>
-                      <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+            !officeRuns.length ? (
+              <p style={S.cartEmpty}>
+                {superAdmin
+                  ? (pickedOfficer ? "مفيش أوردرات نازلة على المأمور ده في اليوم ده." : "اختار مأمور من فوق.")
+                  : "مفيش أوردرات نازلة عليك في اليوم ده."}
+              </p>
+            ) : (
+              <div style={S.fullWrap}>
+                {officeRuns.slice().reverse().map((run) => {
+                  const cats = tallyByCategory(run.orders);
+                  const food = run.orders.reduce((s, o) => s + foodOf(o.items), 0);
+                  const live = !run.closed;
+                  return (
+                    <div key={run.no} style={S.runCard}>
+                      <div style={{ ...S.runHead, ...(run.closed ? S.runHeadClosed : {}), marginTop: 0 }}>
+                        <span>أوردر {run.no}{run.closed ? " · مقفول" : " · مفتوح"}</span>
+                        <span>{run.orders.length} {run.orders.length === 1 ? "زبون" : "ناس"}</span>
+                      </div>
+                      {runActs(run)}
+                      {cats.map((c) => (
+                        <div key={c.name} style={S.catBlock}>
+                          <div style={{ ...S.catBlockHead, fontFamily: "'Cairo',sans-serif" }}><span>{c.name}</span><span style={S.catBlockSub}>{money(c.subtotal)}</span></div>
+                          {c.lines.map((l, i) => (
+                            <div key={i} style={S.tallyLineLight}>
+                              <span style={S.tallyQtyDark}>{l.qty}×</span>
+                              <span style={{ flex: 1, fontFamily: "'Cairo',sans-serif" }}>{l.name}{l.tierLabel ? <> <span style={S.tierTag}>{l.tierLabel}</span></> : null}</span>
+                              <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                      <div style={{ ...S.grandTotal, fontFamily: "'Cairo',sans-serif" }}><span>أكل المحل</span><span>{money(food)}</span></div>
+                      {live ? (
+                        <>
+                          <p style={S.finePrint}>التوصيل 5 جنيه على كل أوردر — مش جزء من أوردر المحل.</p>
+                          <p style={S.finePrint}>{PRICE_NOTE}</p>
+                        </>
+                      ) : null}
                     </div>
-                  ))}
+                  );
+                })}
+              </div>
+            )
+          ) : !officeRuns.length ? (
+            <p style={S.cartEmpty}>
+              {superAdmin
+                ? (pickedOfficer ? "مفيش أوردرات نازلة على المأمور ده في اليوم ده." : "اختار مأمور من فوق.")
+                : "مفيش أوردرات نازلة عليك في اليوم ده."}
+            </p>
+          ) : officeRuns.slice().reverse().map((run) => {
+            const teams = teamBuckets(run.orders);
+            return (
+              <div key={run.no} style={{ marginBottom: 16 }}>
+                <div style={{ ...S.runHead, ...(run.closed ? S.runHeadClosed : {}) }}>
+                  <span>أوردر {run.no}{run.closed ? " · مقفول" : " · مفتوح"}</span>
+                  <span>{run.orders.length} {run.orders.length === 1 ? "زبون" : "ناس"}</span>
                 </div>
-              ))}
-              <div style={{ ...S.grandTotal, fontFamily: "'Cairo',sans-serif" }}><span>أكل المحل</span><span>{money(dayFood)}</span></div>
-              <p style={S.finePrint}>التوصيل 5 جنيه على كل أوردر — مش جزء من أوردر المحل.</p>
-              <p style={S.finePrint}>{PRICE_NOTE}</p>
-            </div>
-          ) : mode === "team" ? (
-            <div>
-              {byTeam.map((g) => {
-                const open = openTeam === g.id;
-                return (
-                  <div key={g.id} style={S.teamBlock}>
-                    <button
-                      type="button"
-                      style={{ ...S.teamHead, ...(open ? S.teamHeadOpen : {}) }}
-                      onClick={() => setOpenTeam(open ? "" : g.id)}
-                      aria-expanded={open}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <h3 style={S.teamTitle}>{g.label}</h3>
-                        <div style={S.teamMeta}>{g.orders.length} أوردر{g.unpaid ? ` · ${g.unpaid} لسه ما دفعوش` : ""}</div>
-                      </div>
-                      <div style={{ flexShrink: 0, textAlign: "left" }}>
-                        <div style={S.payAmount}>{money(g.due)}</div>
-                        <div style={S.userFoldHint}>{open ? "اقفل" : "الأوردرات"}</div>
-                        <ChevronDown size={16} style={{ display: "block", margin: "4px 0 0 auto", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
-                      </div>
-                    </button>
-                    {open && (
-                      <div style={{ ...S.orderList, padding: "0 6px 10px" }}>
-                        {g.orders.map((o) => (
-                          <AdminOrderCard key={o.id} o={o} siblings={g.orders} catalog={catalog} canManage={superAdmin} onMarkPaid={markPaid} onReturn={returnOrder} onClose={closeOrder} onCancelOrder={cancelOfficeOrder} onSaveItems={saveOrderItems} />
-                        ))}
-                      </div>
-                    )}
+                {runActs(run)}
+                {mode === "team" ? teams.map((g) => {
+                  const open = openTeam === `${run.no}:${g.id}`;
+                  return (
+                    <div key={g.id} style={S.teamBlock}>
+                      <button
+                        type="button"
+                        style={{ ...S.teamHead, ...(open ? S.teamHeadOpen : {}) }}
+                        onClick={() => setOpenTeam(open ? "" : `${run.no}:${g.id}`)}
+                        aria-expanded={open}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <h3 style={S.teamTitle}>{g.label}</h3>
+                          <div style={S.teamMeta}>{g.orders.length} أوردر{g.unpaid ? ` · ${g.unpaid} لسه ما دفعوش` : ""}</div>
+                        </div>
+                        <div style={{ flexShrink: 0, textAlign: "left" }}>
+                          <div style={S.payAmount}>{money(g.due)}</div>
+                          <div style={S.userFoldHint}>{open ? "اقفل" : "الأوردرات"}</div>
+                          <ChevronDown size={16} style={{ display: "block", margin: "4px 0 0 auto", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+                        </div>
+                      </button>
+                      {open && (
+                        <div style={{ ...S.orderList, padding: "0 6px 10px" }}>
+                          {g.orders.map((o) => (
+                            <AdminOrderCard key={o.id} o={o} siblings={g.orders} catalog={catalog} canManage={superAdmin} onMarkPaid={markPaid} onReturn={returnOrder} onCancelOrder={cancelOfficeOrder} onSaveItems={saveOrderItems} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }) : (
+                  <div style={S.orderList}>
+                    {run.orders.map((o) => (
+                      <AdminOrderCard key={o.id} o={o} siblings={run.orders} catalog={catalog} canManage={superAdmin} onMarkPaid={markPaid} onReturn={returnOrder} onCancelOrder={cancelOfficeOrder} onSaveItems={saveOrderItems} />
+                    ))}
                   </div>
-                );
-              })}
-              {!byTeam.length && <p style={S.cartEmpty}>{superAdmin ? "مفيش أوردرات في اليوم ده." : "مفيش أوردرات نازلة عليك في اليوم ده."}</p>}
-            </div>
-          ) : (
-            <div style={S.orderList}>
-              {visibleOrders.map((o) => (
-                <AdminOrderCard key={o.id} o={o} siblings={visibleOrders} catalog={catalog} canManage={superAdmin} onMarkPaid={markPaid} onReturn={returnOrder} onClose={closeOrder} onCancelOrder={cancelOfficeOrder} onSaveItems={saveOrderItems} />
-              ))}
-              {!visibleOrders.length && (
-                <p style={S.cartEmpty}>
-                  {superAdmin
-                    ? (pickedOfficer ? "مفيش أوردرات نازلة على المأمور ده في اليوم ده." : "اختار مأمور من فوق.")
-                    : "مفيش أوردرات نازلة عليك في اليوم ده."}
-                </p>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })}
         </>
       )}
     </div>

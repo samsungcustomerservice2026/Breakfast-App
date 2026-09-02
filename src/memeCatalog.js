@@ -46,13 +46,18 @@ export const MEME_SITUATIONS = [
   },
   {
     "id": "idle",
-    "label": "Waited 60 seconds without ordering",
-    "labelAr": "قعد 60 ثانية من غير طلب"
+    "label": "Waited 30 seconds without ordering",
+    "labelAr": "قعد 30 ثانية من غير طلب"
   },
   {
     "id": "pay",
     "label": "Going to pay",
     "labelAr": "رايح يدفع"
+  },
+  {
+    "id": "delivered",
+    "label": "Order delivered — admin ping",
+    "labelAr": "الأكل وصل"
   }
 ];
 export const MEME_CATALOG = {
@@ -90,16 +95,20 @@ export const MEME_CATALOG = {
   ],
   "egg": [
     "memes/egg/100-kalwry.jpg",
+    "memes/egg/dsuout9xcae3rxu.webp",
+    "memes/egg/fjzt99swiacclx3.jpg",
     "memes/egg/ana-btshaym.jpg",
     "memes/egg/ana-khayf-awy-yahady.jpg",
     "memes/egg/ayh-yashykha.jpg",
     "memes/egg/baaaaas-kfaya.jpg",
     "memes/egg/gahzz.jpg",
     "memes/egg/gtk-wksa-twksk.jpg",
+    "memes/egg/dwht.jpg",
     "memes/egg/fy-hyaty-mashwft-alhad-kda.jpg",
     "memes/egg/la-msh-ana.jpg",
     "memes/egg/layaragl.jpg",
     "memes/egg/mthlftsh-fy-alklam.jpg",
+    "memes/egg/mwwwd.jpg",
     "memes/egg/mynfash.jpg",
     "memes/egg/wdah-yalmby.jpg",
     "memes/egg/yakhbr-abyd.jpg",
@@ -131,6 +140,7 @@ export const MEME_CATALOG = {
     "memes/potato/fy-hyaty-mashwft-alhad-kda.jpg",
     "memes/potato/lqd-antabny-alqsharyra.jpg",
     "memes/potato/nhyn-hnwn.jpg",
+    "memes/potato/waaaahda.png",
     "memes/potato/wgaha-wgaha.jpg",
     "memes/potato/yla-byna.jpg"
   ],
@@ -147,6 +157,7 @@ export const MEME_CATALOG = {
     "memes/pay_one/alragl-da-hykhlyny-aayt.jpg"
   ],
   "remove": [
+    "memes/remove/61aae06a-4028-441e-8647-038846066a2f.jpg",
     "memes/remove/argwk-blash-kda.jpg",
     "memes/remove/allh-allh.jpg",
     "memes/remove/ana-aly-akhry.jpg",
@@ -161,11 +172,35 @@ export const MEME_CATALOG = {
     "memes/remove/nhyn-hnwn.jpg"
   ],
   "idle": [
-    "memes/idle/matntq-ybny.jpg"
+    "memes/idle/croe7njxeai4hrz.jpg",
+    "memes/idle/euvzsw2xcaean-g.jpg",
+    "memes/idle/images-1.jpg",
+    "memes/idle/images-2.jpg",
+    "memes/idle/matntq-ybny.jpg",
+    "memes/idle/mmmm.jpg"
   ],
   "pay": [
+    "memes/pay/a7lal.jpg",
+    "memes/pay/e4fe4aa8-b272-46de-8395-d374fe45010f.jpg",
+    "memes/pay/images-1.jpg",
+    "memes/pay/images.jpg",
+    "memes/pay/images3.jpg",
     "memes/pay/adfa-hsab.jpg",
     "memes/pay/adfalh-yabybrs.jpg",
+    "memes/pay/hsab-2.jpg",
+    "memes/pay/hsab.jpg",
     "memes/pay/htdfa-hwryk.jpg"
+  ],
+  "delivered": [
+    "memes/delivered/229325-almwzf-algaya.png",
+    "memes/delivered/2haaaan.jpg",
+    "memes/delivered/2haaaan89.jpg",
+    "memes/delivered/3haaaan.jpg",
+    "memes/delivered/5haaaan.jpg",
+    "memes/delivered/adfa-hsab.jpg",
+    "memes/delivered/haaaan-4.jpg",
+    "memes/delivered/haaaan.jpg",
+    "memes/delivered/khmhaaaan-4.jpg",
+    "memes/delivered/msh-wakl.jpg"
   ]
 };

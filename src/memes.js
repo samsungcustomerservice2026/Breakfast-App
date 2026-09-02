@@ -20,7 +20,7 @@ export async function loadMemeCatalog() {
       if (!row.situation || !row.path) continue;
       (next[row.situation] ||= []).push(row.path);
     }
-    if (Object.keys(next).length) catalog = next;
+    if (Object.keys(next).length) catalog = { ...MEME_CATALOG, ...next };
   } catch { /* keep bundled catalog */ }
   return catalog;
 }
@@ -46,12 +46,12 @@ function fromPool(situation, exceptSrc) {
 function situationForAdd({ itemId, catId, count }) {
   if (count === 2) return "second_item";
   if (count >= 3) return "many_items";
-  if (isCheese(itemId)) return "cheese";
+  if (isCheese(itemId) || catId === "oriental") return "cheese";
   if (catId === "foul" || String(itemId).startsWith("foul-") || String(itemId).startsWith("box-plain") || String(itemId).startsWith("box-alex") || String(itemId).startsWith("box-olive") || String(itemId).startsWith("box-sug") || String(itemId).startsWith("box-hotoil") || String(itemId).startsWith("box-lemon") || String(itemId).startsWith("box-bastr") || String(itemId).startsWith("box-butter")) return "foul";
   if (catId === "taameya" || catId === "green" || String(itemId).startsWith("tam-") || String(itemId).startsWith("green-")) return "taameya";
   if (catId === "omelet" || catId === "omelet_plates" || catId === "eggs" || String(itemId).startsWith("om-") || String(itemId).startsWith("plt-") || String(itemId).startsWith("egg-")) return "egg";
   if (catId === "fries" || catId === "batates" || String(itemId).startsWith("fr-") || String(itemId).startsWith("bat-") || String(itemId).startsWith("ori-fries") || String(itemId).startsWith("ori-pomme") || String(itemId).startsWith("ori-chips") || String(itemId).startsWith("ori-mash")) return "potato";
-  return "";
+  return "second_item";
 }
 
 /**
@@ -68,6 +68,7 @@ export function pickSituationMeme({ event, itemId, catId, count, exceptSrc }) {
   else if (event === "remove") situation = "remove";
   else if (event === "pay_one") situation = "pay_one";
   else if (event === "pay") situation = "pay";
+  else if (event === "delivered") situation = "delivered";
   else if (event === "add") {
     situation = situationForAdd({ itemId, catId, count });
     if (situation === "many_items") shake = true;

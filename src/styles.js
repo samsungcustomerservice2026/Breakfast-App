@@ -15,7 +15,9 @@ export const globalCss = `
   .bravo-pop{animation:bravoPop .38s cubic-bezier(.2,1.4,.4,1);}
   @keyframes haramShake{0%,100%{transform:rotate(0) scale(1);}18%{transform:rotate(-5deg) scale(1.08);}36%{transform:rotate(5deg) scale(1.06);}54%{transform:rotate(-4deg) scale(1.04);}72%{transform:rotate(3deg);} }
   .haram-pop{animation:haramShake .5s ease;}
-  @media (prefers-reduced-motion:reduce){.spin,[style*="floaty"],.bravo-pop,.haram-pop{animation:none!important;}}
+  @keyframes shopGlow{0%,100%{box-shadow:0 0 0 3px rgba(255,90,31,.22);}50%{box-shadow:0 0 0 7px rgba(255,90,31,.08);}}
+  .chip-shop{animation:shopGlow 1.7s ease-in-out infinite;}
+  @media (prefers-reduced-motion:reduce){.spin,[style*="floaty"],.bravo-pop,.haram-pop,.chip-shop{animation:none!important;}}
   ::-webkit-scrollbar{height:7px;width:7px;}::-webkit-scrollbar-thumb{background:${line};border-radius:9px;}
   .catRail::-webkit-scrollbar{display:none;}
   .catRail{scrollbar-width:none;-webkit-overflow-scrolling:touch;}
@@ -155,6 +157,10 @@ export const S = {
   dateTabDate: { fontSize: 11, fontWeight: 500, color: muted },
 
   adminActions: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" },
+  runHead: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "4px 0 8px", fontFamily: "'Cairo',sans-serif", fontSize: 16, fontWeight: 800 },
+  runHeadClosed: { color: muted, marginTop: 18 },
+  runCard: { display: "grid", gap: 10, paddingBottom: 10 },
+  runActs: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   adminStat: { marginLeft: "auto", fontSize: 14, color: muted, fontWeight: 600 },
   adminStatBar: { display: "flex", flexWrap: "wrap", gap: "8px 14px", background: paper, border: `1px solid ${line}`, borderRadius: 12, padding: "10px 14px", marginBottom: 14, fontSize: 13.5, fontWeight: 700, color: ink, fontFamily: "'Cairo','DM Sans',sans-serif" },
   adminTabs: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 16 },
@@ -164,6 +170,8 @@ export const S = {
   chipRow: { display: "flex", gap: 8, overflowX: "auto", paddingBottom: 6, marginBottom: 14 },
   chip: { flexShrink: 0, background: paper, border: `1.5px solid ${line}`, color: ink, borderRadius: 999, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
   chipOn: { background: ink, color: cream, borderColor: ink },
+  chipShop: { display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, background: "#FFF1EA", border: "1.5px solid #FF5A1F", color: "#FF5A1F", borderRadius: 999, padding: "8px 14px", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif", boxShadow: "0 0 0 3px rgba(255,90,31,.18)" },
+  chipShopOn: { background: "#FF5A1F", color: "#fff", borderColor: "#E24A14", boxShadow: "0 8px 18px -8px rgba(255,90,31,.8)" },
   deskNav: { display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap" },
   deskNavBtn: { flex: "1 1 140px", background: paper, border: `1.5px solid ${line}`, color: ink, borderRadius: 12, padding: "10px 8px", fontSize: 14, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
   deskNavOn: { background: ink, color: cream, borderColor: ink },
@@ -187,6 +195,9 @@ export const S = {
   orderBackStamp: { display: "inline-flex", alignItems: "center", gap: 6, background: clay, color: "#fff", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 800, fontFamily: "'Cairo',sans-serif" },
   orderClosedStamp: { display: "inline-flex", alignItems: "center", gap: 6, background: ink, color: cream, borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 800, fontFamily: "'Cairo',sans-serif" },
   paidMark: { display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: clay, color: "#fff", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
+  pingMark: { display: "inline-flex", alignItems: "center", gap: 6, border: "none", background: "#FF5A1F", color: "#fff", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
+  pingMarkOff: { background: "#d9d3c9", color: "#6f675c", cursor: "not-allowed" },
+  orderDeliveredStamp: { display: "inline-flex", alignItems: "center", gap: 6, background: "#FF5A1F", color: "#fff", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 800, fontFamily: "'Cairo',sans-serif" },
   paidStamp: { display: "inline-flex", alignItems: "center", gap: 6, background: green, color: "#fff", borderRadius: 999, padding: "7px 14px", fontSize: 13, fontWeight: 800, fontFamily: "'Cairo',sans-serif" },
   paidWait: { fontWeight: 800, color: clay, fontFamily: "'Cairo',sans-serif", fontSize: 13 },
   proofBox: { marginTop: 8, background: cream, border: `1px dashed ${line}`, borderRadius: 12, padding: 10, textAlign: "right" },
@@ -285,6 +296,17 @@ export const U = {
   stickyHello: { fontSize: 13, fontWeight: 700, color: "#666", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   stickyBtns: { display: "flex", alignItems: "center", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" },
   stickyGhost: { background: "#fff", border: "1.5px solid #e6e6e6", color: night, borderRadius: 10, padding: "6px 10px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
+  notifyBar: { marginTop: 10, background: "#fff", border: "1.5px solid #e6e6e6", borderRadius: 14, padding: "10px 12px", display: "grid", gap: 8 },
+  notifyText: { fontSize: 13, fontWeight: 700, color: night, lineHeight: 1.45 },
+  notifyActs: { display: "flex", gap: 8, flexWrap: "wrap" },
+  notifyBtn: { border: "none", background: accent, color: "#fff", borderRadius: 10, padding: "7px 12px", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
+  notifySkip: { border: "1.5px solid #e6e6e6", background: "#fff", color: night, borderRadius: 10, padding: "7px 12px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Cairo',sans-serif" },
+  installScrim: { position: "fixed", inset: 0, zIndex: 90, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "flex-end", justifyContent: "center", padding: 0 },
+  installCard: { width: "100%", maxWidth: 430, background: "#fff", borderRadius: "22px 22px 0 0", padding: "18px 18px calc(18px + env(safe-area-inset-bottom))", display: "grid", gap: 10, boxShadow: "0 -18px 50px -18px rgba(0,0,0,.45)" },
+  installIcon: { width: 44, height: 44, borderRadius: 12, background: "#FFF1EA", color: accent, display: "grid", placeItems: "center" },
+  installTitle: { margin: 0, fontSize: 20, fontWeight: 800, color: night, fontFamily: "'Cairo',sans-serif", lineHeight: 1.3 },
+  installText: { margin: 0, fontSize: 14, fontWeight: 600, color: "#666", lineHeight: 1.5 },
+  installActs: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 4 },
   top: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 18px 6px", gap: 10 },
   topLoc: { flex: 1, minWidth: 0, textAlign: "right" },
   locLabel: { display: "block", fontSize: 11, color: fog, fontWeight: 600 },

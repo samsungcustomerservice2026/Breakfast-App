@@ -38,6 +38,17 @@ export function localAsset(path) {
   return `/${String(path).replace(/^\//, "")}`;
 }
 
+/** Local public file + Storage URL. Overlay tries local first, then remote. */
+export function memeUrls(path) {
+  const clean = String(path || "").replace(/^\//, "").split("?")[0];
+  if (!clean) return { local: "", remote: "" };
+  const rel = clean.startsWith("memes/") ? clean.slice(6) : clean;
+  return {
+    local: `/memes/${rel}`,
+    remote: publicObject(MEMES_BUCKET, rel),
+  };
+}
+
 /** @deprecated use publicObject with the right bucket */
 export function mediaSrc(path, rev) {
   const clean = String(path || "").replace(/^\//, "");
