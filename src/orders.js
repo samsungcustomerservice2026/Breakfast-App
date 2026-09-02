@@ -59,3 +59,17 @@ export function parseOrderId(id) {
   if (i < 0) return { parentId: s, batchId: null };
   return { parentId: s.slice(0, i), batchId: s.slice(i + 2) };
 }
+
+export function setBatchLines(items, batchId, lines, deliveryFee = 0) {
+  const food = (lines || []).reduce((s, l) => s + Number(l.price || 0) * Number(l.qty || 0), 0);
+  const batchTotal = food + Number(deliveryFee || 0);
+  if (!batchId || !Array.isArray(items) || items[0]?.type !== "batch") {
+    return { items: lines, total: batchTotal, updated_at: new Date().toISOString() };
+  }
+  const next = (items || []).map((b) => (b.id === batchId ? { ...b, lines, total: batchTotal } : b));
+  return {
+    items: next,
+    total: next.reduce((s, b) => s + Number(b.total || 0), 0),
+    updated_at: new Date().toISOString(),
+  };
+}

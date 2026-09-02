@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Plus, Minus, Trash2, Check, ClipboardCopy, RefreshCw, Layers, Users, Phone, RotateCcw, ChevronDown, Search, Home, ShoppingBag, ArrowRight, ClipboardList, Shield, LogOut, Star, CalendarDays } from "lucide-react";
+import { Plus, Minus, Trash2, Check, ClipboardCopy, RefreshCw, Layers, Users, Phone, RotateCcw, ChevronDown, Search, X, Home, ShoppingBag, ArrowRight, ClipboardList, Shield, LogOut, Star, CalendarDays } from "lucide-react";
 import { supabase, configError } from "./supabase.js";
 import { S, U, accent, globalCss } from "./styles.js";
 import { itemImage, onImgError } from "./itemImages.js";
 import { afeya } from "./afeyat.js";
 import { pickSituationMeme, loadMemeCatalog } from "./memes.js";
 import { MEME_SITUATIONS } from "./memeCatalog.js";
-import { expandOrders, withNewBatch, setBatchPaid, parseOrderId } from "./orders.js";
+import { expandOrders, withNewBatch, setBatchPaid, parseOrderId, setBatchLines } from "./orders.js";
 import { loadPayQr, savePayQr, loadPayLink, savePayLink, loadCollectorPay, fileToDataUrl, normalizePayLink, settingsSaveHint, PAY_QR_FALLBACK, loadSetting, saveSetting } from "./settings.js";
 import { uploadAsset, setMediaRev, resolveLogoSrc, publicObject, LOGO_PATH, MEDIA_REV_KEY, MEMES_BUCKET, LOGO_BUCKET } from "./media.js";
 import { POPULAR_ID, POPULAR_ITEMS, CAT_SHORT, CAT_ICON, POPULAR_ID_SET } from "./popular.js";
@@ -30,6 +30,20 @@ const TEAMS = [
 const teamLabel = (id) => TEAMS.find((t) => t.id === id)?.label || "";
 const TEAM_ORDER = TEAMS.map((t) => t.id);
 const COLLECTOR_LS = "hayat_collector";
+const VIEW_LS = "hayat_view";
+const uiKey = (uid) => `hayat_ui_${uid}`;
+const readShopUi = (uid) => {
+  try { return JSON.parse(sessionStorage.getItem(uiKey(uid)) || "null"); } catch { return null; }
+};
+const writeShopUi = (uid, data) => {
+  try { sessionStorage.setItem(uiKey(uid), JSON.stringify(data)); } catch { /* ignore */ }
+};
+const clearShopUi = (uid) => {
+  try {
+    sessionStorage.removeItem(VIEW_LS);
+    if (uid) sessionStorage.removeItem(uiKey(uid));
+  } catch { /* ignore */ }
+};
 const isSuperAdmin = (p) => p?.role === "super_admin";
 const isAdminUser = (p) => p?.is_admin === true || p?.role === "admin" || p?.role === "super_admin";
 const roleLabel = (p) => (p?.role === "super_admin" ? "المدير" : (p?.is_admin || p?.role === "admin") ? "مأمور" : "مستخدم");
@@ -37,6 +51,9 @@ const officeLabel = (p) => (isSuperAdmin(p) ? "المدير" : "المأمور")
 const CASH_PROOF = "cash";
 const isCashPay = (o) => o?.pay_proof === CASH_PROOF || o?.pay_method === "cash";
 const isShotProof = (p) => typeof p === "string" && p.length > 8 && p !== CASH_PROOF;
+const isOrderClosed = (o) => !!o?.closed;
+const isOrderReturned = (o) => !!o?.returned && !o?.closed && !o?.cancelled;
+const isOrderCancelled = (o) => !!o?.cancelled;
 const loadOfficers = async () => {
   const { data, error } = await supabase
     .from("profiles")
@@ -134,7 +151,9 @@ const orderTitle = (list, o, today) => {
   const day = o.order_date === today ? "النهارده" : prettyDate(o.order_date);
   return count > 1 ? `${day} · أوردر ${n}` : day;
 };
-function OrderBlock({ order, title, onReorder, onPay, tone, collectorName }) {
+function OrderBlock({ order, title, onReorder, onPay, onFix, onCancel, tone, collectorName }) {
+  const returned = isOrderReturned(order);
+  const closed = isOrderClosed(order);
   return (
     <div style={tone === "today" ? S.myOrderBox : S.personCard} dir="rtl">
       <div style={tone === "today" ? S.myOrderHead : S.personHead}>
@@ -142,8 +161,8 @@ function OrderBlock({ order, title, onReorder, onPay, tone, collectorName }) {
         {tone !== "today" && <span style={S.personTotal}>{money(foodOf(order.items) + DELIVERY_FEE)}</span>}
       </div>
       {collectorName ? <div style={S.payPhone}>هتدفع عند {collectorName}</div> : null}
-      {order.paid ? <div style={{ ...S.paidStamp, marginTop: 8 }}>دافع</div> : <div style={{ ...S.paidWait, marginTop: 8 }}>لسه ما اتعلّمش دافع</div>}
-      {isCashPay(order) && !order.paid ? <div style={S.collectorTag}>هدفع كاش</div> : null}
+      {closed ? <div style={{ ...S.paidStamp, marginTop: 8 }}>مقفول</div> : isOrderCancelled(order) ? <div style={{ ...S.orderClosedStamp, marginTop: 8 }}>الأوردر اتلغى</div> : returned ? <div style={{ ...S.orderBackStamp, marginTop: 8 }}>راجع لك — عدّل أو ألغي</div> : order.paid ? <div style={{ ...S.paidStamp, marginTop: 8 }}>دافع</div> : <div style={{ ...S.paidWait, marginTop: 8 }}>لسه ما اتعلّمش دافع</div>}
+      {isCashPay(order) && !order.paid && !returned ? <div style={S.collectorTag}>هدفع كاش</div> : null}
       {order.items.map((l) => (
         <div key={l.key} style={tone === "today" ? S.myOrderLine : S.personLine}>
           <span>{l.qty}× {l.nameAr || l.name}{l.tierLabel ? <> <span style={S.tierTag}>{l.tierLabel}</span></> : null}</span>
@@ -158,8 +177,10 @@ function OrderBlock({ order, title, onReorder, onPay, tone, collectorName }) {
         </div>
       ) : null}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
-        {onReorder && <button type="button" style={{ ...S.primaryBtn, width: "100%" }} onClick={() => onReorder(order)}><RotateCcw size={15} /> اطلبه تاني</button>}
-        {onPay && (
+        {returned && onFix && !isOrderCancelled(order) && <button type="button" style={{ ...S.primaryBtn, width: "100%" }} onClick={() => onFix(order)}>عدّل وابعت تاني</button>}
+        {returned && onCancel && !isOrderCancelled(order) && <button type="button" style={{ ...S.ghostBtn, width: "100%", justifyContent: "center" }} onClick={() => onCancel(order)}>ألغي الأوردر</button>}
+        {!returned && !isOrderCancelled(order) && onReorder && <button type="button" style={{ ...S.primaryBtn, width: "100%" }} onClick={() => onReorder(order)}><RotateCcw size={15} /> اطلبه تاني</button>}
+        {!returned && !closed && !isOrderCancelled(order) && onPay && (
           <button type="button" style={{ ...S.ghostBtn, width: "100%", justifyContent: "center" }} onClick={onPay}>
             {isCashPay(order) ? "هدفع كاش — غيّر لو حابب" : isShotProof(order.pay_proof) ? "شوف كيو آر إنستاباي" : "ادفع بإنستاباي أو كاش"}
           </button>
@@ -194,14 +215,34 @@ function tiersOf(row, tiered) {
 function defaultTier(tiers) {
   return tiers.find((t) => t.tier === "balady")?.tier || tiers[0]?.tier;
 }
+function lineKey(l) {
+  return l.key || `${l.categoryId || l.catId || ""}::${l.itemId}::${l.tier}`;
+}
+function makeOrderLine(cat, it, tier, qty = 1) {
+  return {
+    key: `${cat.id}::${it.id}::${tier}`,
+    itemId: it.id,
+    categoryId: cat.id,
+    categoryName: cat.name_ar || cat.name,
+    name: it.name,
+    nameAr: it.name_ar,
+    tier,
+    tierLabel: tierLabel(cat.id, tier),
+    price: Number(it[`price_${tier}`] || 0),
+    qty,
+  };
+}
 
 export default function App() {
   const [phase, setPhase] = useState("loading"); // loading | auth | needsProfile | ready | error
   const [errMsg, setErrMsg] = useState(configError || null);
   const [session, setSession] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [profile, setProfile] = useState(null);
   const [catalog, setCatalog] = useState([]);
-  const [view, setView] = useState("shop");
+  const [view, setView] = useState(() => {
+    try { return sessionStorage.getItem(VIEW_LS) === "admin" ? "admin" : "shop"; } catch { return "shop"; }
+  });
   const [toast, setToast] = useState(null);
   const [loginBravo, setLoginBravo] = useState(false);
   const narrow = useIsNarrow();
@@ -212,45 +253,39 @@ export default function App() {
     loadSetting(MEDIA_REV_KEY, "").then(setMediaRev);
   }, []);
 
-  /* auth session listener */
+  /* auth: ignore token refresh — Chrome tab switches would otherwise remount the shop */
   useEffect(() => {
-    if (configError) { setPhase("error"); return; }
+    if (configError) { setPhase("error"); return undefined; }
+    let alive = true;
     supabase.auth.getSession().then(({ data, error }) => {
+      if (!alive) return;
       if (error) {
         setErrMsg(error.message || "الدخول وقف في السكة.");
         setPhase("error");
         return;
       }
       setSession(data.session);
+      setAuthReady(true);
     }).catch((e) => {
+      if (!alive) return;
       setErrMsg(e.message || "الدخول وقف في السكة.");
       setPhase("error");
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      if (!alive) return;
+      if (event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") return;
+      setSession(s);
+      setAuthReady(true);
+    });
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
-  /* when session changes, load profile + menu */
   useEffect(() => {
-    if (configError) return;
-    (async () => {
-      if (!session) { setPhase("auth"); setProfile(null); return; }
-      setPhase("loading");
-      try {
-        const { data: prof, error: pErr } = await supabase.from("profiles").select("*").eq("id", session.user.id).maybeSingle();
-        if (pErr) throw pErr;
-        if (!prof || !prof.department) { setProfile(prof); setPhase("needsProfile"); return; }
-        setProfile(prof);
-        await loadMenu();
-        await loadMemeCatalog();
-        setPhase("ready");
-      } catch (e) {
-        setErrMsg(e.message || "حصلت حاجة وحشة وأحنا بنفتح حسابك.");
-        setPhase("error");
-      }
-    })();
-    // eslint-disable-next-line
-  }, [session]);
+    try { sessionStorage.setItem(VIEW_LS, view); } catch { /* ignore */ }
+  }, [view]);
 
   const loadMenu = useCallback(async () => {
     const [{ data: cats, error: cErr }, { data: items, error: iErr }] = await Promise.all([
@@ -264,11 +299,69 @@ export default function App() {
     setCatalog((cats || []).map((c) => ({ ...c, items: byCat[c.id] || [] })));
   }, []);
 
+  const sessionUserId = session?.user?.id || null;
+  const bootedUserRef = useRef(null);
+
+  useEffect(() => {
+    if (configError || !authReady) return undefined;
+    let cancelled = false;
+    (async () => {
+      if (!sessionUserId) {
+        bootedUserRef.current = null;
+        setPhase("auth");
+        setProfile(null);
+        return;
+      }
+      if (bootedUserRef.current === sessionUserId) return;
+      setPhase("loading");
+      try {
+        const { data: prof, error: pErr } = await supabase.from("profiles").select("*").eq("id", sessionUserId).maybeSingle();
+        if (cancelled) return;
+        if (pErr) throw pErr;
+        if (!prof || !prof.department) {
+          setProfile(prof);
+          setPhase("needsProfile");
+          return;
+        }
+        setProfile(prof);
+        await loadMenu();
+        await loadMemeCatalog();
+        if (cancelled) return;
+        bootedUserRef.current = sessionUserId;
+        setPhase("ready");
+      } catch (e) {
+        if (cancelled) return;
+        setErrMsg(e.message || "حصلت حاجة وحشة وأحنا بنفتح حسابك.");
+        setPhase("error");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [authReady, sessionUserId, loadMenu]);
+
   useEffect(() => {
     if (view === "admin" && !isAdminUser(profile)) setView("shop");
   }, [view, profile]);
 
-  const signOut = async () => { sessionStorage.removeItem("hayat_bravo"); await supabase.auth.signOut(); setView("shop"); };
+  useEffect(() => {
+    if (view !== "admin") return undefined;
+    window.history.pushState({ office: 1 }, "");
+    const onPop = () => setView("shop");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [view]);
+
+  const leaveOffice = () => {
+    if (window.history.state?.office) window.history.back();
+    else setView("shop");
+  };
+
+  const signOut = async () => {
+    sessionStorage.removeItem("hayat_bravo");
+    clearShopUi(profile?.id);
+    bootedUserRef.current = null;
+    await supabase.auth.signOut();
+    setView("shop");
+  };
 
   useEffect(() => {
     if (phase === "ready" || phase === "needsProfile") {
@@ -295,7 +388,7 @@ export default function App() {
           <div style={S.brandRowSm}><Logo /><span style={S.headerTitle} dir="rtl">{APP_NAME}</span></div>
           <div style={S.headerRight}>
             <span style={S.hello} dir="rtl">يا {(profile.name || "").split(" ")[0] || "معلم"}{teamLabel(profile.department) ? ` · ${teamLabel(profile.department)}` : ""}{isSuperAdmin(profile) ? " · المدير" : ""}</span>
-            <button style={S.ghostBtn} onClick={() => setView("shop")}>المنيو</button>
+            <BackBtn onClick={leaveOffice} label="المنيو" />
             <button style={S.ghostBtn} onClick={signOut} title="سيّب المكان">خروج</button>
           </div>
         </header>
@@ -303,7 +396,7 @@ export default function App() {
 
       {view === "shop"
         ? <ShopView {...{ catalog, profile, showToast, signOut, setView }} />
-        : <AdminView {...{ narrow, showToast, profile }} />}
+        : <AdminView {...{ narrow, showToast, profile, catalog, loadMenu }} />}
 
       {toast && (<div style={{ ...S.toast, background: toast.tone === "err" ? "#b23a2f" : "#2f6b4f" }}>{toast.tone === "err" ? "!" : <Check size={16} />} {toast.msg}</div>)}
       {bravoPop}
@@ -469,6 +562,13 @@ function srcCatOf(cat, it) {
   return it._srcCat || cat;
 }
 
+function matchesItemSearch(it, cat, needle) {
+  if (!needle) return true;
+  const pop = POPULAR_ITEMS.find((p) => p.id === it.id || p.alt === it.id);
+  const blob = `${it.name_ar || ""} ${it.name || ""} ${pop?.nameAr || ""} ${cat?.name_ar || ""} ${cat?.name || ""} ${CAT_SHORT[cat?.id] || ""}`.toLowerCase();
+  return blob.includes(needle.toLowerCase());
+}
+
 function Stars({ n = 4 }) {
   return (
     <div style={U.detailStars}>
@@ -498,6 +598,15 @@ function ProductCard({ cat, it, qty, onOpen }) {
   );
 }
 
+function BackBtn({ onClick, label = "رجوع" }) {
+  return (
+    <button type="button" style={U.backBtn} onClick={onClick}>
+      <ArrowRight size={18} />
+      {label}
+    </button>
+  );
+}
+
 function ItemDetail({ pick, onClose, onAdd }) {
   const { cat: pc, it } = pick;
   const tiers = tiersOf(it, pc.tiered);
@@ -514,7 +623,7 @@ function ItemDetail({ pick, onClose, onAdd }) {
   return (
     <div style={U.detail} dir="rtl">
       <div style={U.detailTop}>
-        <button type="button" style={U.ghostIcon} onClick={onClose} aria-label="رجوع"><ArrowRight size={22} /></button>
+        <BackBtn onClick={onClose} />
       </div>
       <div style={U.detailHero}>
         <h1 style={U.detailTitle}>{it.name_ar || it.name}</h1>
@@ -569,11 +678,14 @@ function ItemDetail({ pick, onClose, onAdd }) {
 /* ─────────────── Shop ─────────────── */
 function ShopView({ catalog, profile, showToast, signOut, setView }) {
   const date = todayStr();
-  const [activeCat, setActiveCat] = useState(POPULAR_ID);
-  const [tab, setTab] = useState("menu");
+  const [activeCat, setActiveCat] = useState(() => readShopUi(profile.id)?.activeCat || POPULAR_ID);
+  const [tab, setTab] = useState(() => (readShopUi(profile.id)?.tab === "history" ? "history" : "menu"));
   const [q, setQ] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
-  const [cart, setCart] = useState({}); // "catId::itemId::tier" -> qty
+  const [cart, setCart] = useState(() => {
+    const saved = readShopUi(profile.id)?.cart;
+    return saved && typeof saved === "object" ? saved : {};
+  });
   const [history, setHistory] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [bravo, setBravo] = useState(null);
@@ -590,12 +702,18 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
   const [collectorId, setCollectorId] = useState(() => {
     try { return localStorage.getItem(COLLECTOR_LS) || ""; } catch { return ""; }
   });
+  const [returnedEditId, setReturnedEditId] = useState("");
   const bravoTimer = useRef(null);
   const lastMeme = useRef("");
   const pendingPay = useRef(false);
   const pendingCollector = useRef("");
   const pendingOrderId = useRef("");
   const idleShown = useRef(false);
+  const shopDepthRef = useRef(0);
+
+  useEffect(() => {
+    writeShopUi(profile.id, { activeCat, tab, cart });
+  }, [profile.id, activeCat, tab, cart]);
 
   const lookup = useMemo(() => {
     const m = {};
@@ -669,13 +787,13 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
         .order("updated_at", { ascending: false }));
     }
     if (error) return;
-    setInbox(expandOrders(data || []).map((r) => ({
+    setInbox(expandOrders(data || []).filter((r) => !r.returned && !r.cancelled).map((r) => ({
       ...r,
       name: r.profiles?.name || "مش معروف",
       phone: r.profiles?.phone || "",
       department: r.profiles?.department || "",
     })));
-  }, [profile]);
+  }, [profile.id, profile.role, profile.is_admin]);
 
   useEffect(() => { loadOrders(); }, [loadOrders]);
   useEffect(() => { loadCollectors(); }, [loadCollectors]);
@@ -684,7 +802,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
     if (!isAdminUser(profile)) return undefined;
     const t = setInterval(loadInbox, 12000);
     return () => clearInterval(t);
-  }, [loadInbox, profile]);
+  }, [loadInbox, profile.id, profile.role, profile.is_admin]);
   useEffect(() => { loadMemeCatalog(); }, []);
   useEffect(() => { if (cartOpen) loadCollectors(); }, [cartOpen, loadCollectors]);
 
@@ -697,14 +815,6 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
     setPayMethod(cash ? "cash" : "instapay");
     setProofDone(isShotProof(order?.pay_proof));
     setPayOpen(true);
-  };
-
-  const closePay = () => {
-    if (payMethod !== "cash" && !proofDone) {
-      showToast("ارفع سكرين التحويل، أو اختار هدفع كاش.", "err");
-      return;
-    }
-    setPayOpen(false);
   };
 
   const savePayMethod = async (method) => {
@@ -833,12 +943,82 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
       showToast("الأصناف دي مش في المنيو دلوقتي.", "err");
       return;
     }
+    setReturnedEditId("");
     setCart(next);
     setTab("menu");
     setCartOpen(true);
     showToast(skipped
       ? "اتنسخ في العربية… شوية أصناف اختفت من المنيو."
       : "اتنسخ في العربية. راجع وعدّل وبعدين على مسئوليتي — هيتسجل أوردر جديد.");
+  };
+
+  const beginReturnedEdit = (order) => {
+    if (!isOrderReturned(order)) return;
+    const next = {};
+    let skipped = 0;
+    for (const l of order.items || []) {
+      const catId = l.categoryId || l.catId;
+      const itemId = l.itemId;
+      const tier = l.tier;
+      if (!catId || !itemId || !tier) { skipped += 1; continue; }
+      const it = lookup[`${catId}::${itemId}`];
+      if (!it || it[`price_${tier}`] == null) { skipped += l.qty || 1; continue; }
+      const k = ck(catId, itemId, tier);
+      next[k] = (next[k] || 0) + Number(l.qty || 0);
+    }
+    const added = Object.values(next).reduce((s, n) => s + n, 0);
+    if (!added) {
+      showToast("الأصناف دي مش في المنيو دلوقتي.", "err");
+      return;
+    }
+    setReturnedEditId(parseOrderId(order.id).parentId || order.id);
+    if (order.collector_id) setCollectorId(order.collector_id);
+    setCart(next);
+    setTab("menu");
+    setCartOpen(true);
+    showToast(skipped
+      ? "عدّل وابعت تاني… شوية أصناف اختفت من المنيو."
+      : "عدّل وابعت تاني للمأمور.");
+  };
+
+  const dropReturnedFromHistory = (orderId) => {
+    const parentId = parseOrderId(orderId).parentId || orderId;
+    setHistory((h) => h.filter((o) => parseOrderId(o.id).parentId !== parentId && o.id !== parentId));
+  };
+
+  const markHistorySent = (orderId, items, total, collector) => {
+    const parentId = parseOrderId(orderId).parentId || orderId;
+    setHistory((h) => h.map((o) => (
+      parseOrderId(o.id).parentId === parentId || o.id === parentId
+        ? { ...o, items, total, returned: false, closed: false, pay_proof: null, collector_id: collector }
+        : o
+    )));
+  };
+
+  const abandonReturnedEdit = useCallback(() => {
+    if (!returnedEditId) { setCartOpen(false); return; }
+    setReturnedEditId("");
+    setCart({});
+    setCartOpen(false);
+  }, [returnedEditId]);
+
+  const cancelReturnedOrder = async (order) => {
+    if (!isOrderReturned(order)) return;
+    if (!window.confirm("هتلغي الأوردر؟ هيتشال خالص ومش هيرجع للمأمور.")) return;
+    const parentId = parseOrderId(order.id).parentId || order.id;
+    const { error } = await supabase.from("orders").delete().eq("id", parentId).eq("user_id", profile.id);
+    if (error) {
+      showToast(error.message || "الأوردر ما اتشالش.", "err");
+      return;
+    }
+    dropReturnedFromHistory(parentId);
+    if ((parseOrderId(returnedEditId).parentId || returnedEditId) === parentId) {
+      setReturnedEditId("");
+      setCart({});
+      setCartOpen(false);
+    }
+    await loadOrders();
+    showToast("الأوردر اتشال. الإشعار راح.");
   };
   const cartTotal = useMemo(() => cartLines.reduce((s, l) => s + l.price * l.qty, 0), [cartLines]);
   const cartCount = useMemo(() => cartLines.reduce((s, l) => s + l.qty, 0), [cartLines]);
@@ -866,20 +1046,36 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
     try {
       const items = cartLines.map((l) => ({ key: l.key, itemId: l.itemId, categoryId: l.catId, categoryName: l.catName, name: l.name, nameAr: l.nameAr, tier: l.tier, tierLabel: l.tierLabel, price: l.price, qty: l.qty }));
       const total = foodOf(items) + DELIVERY_FEE;
-      const payload = { user_id: profile.id, collector_id: collectorId, order_date: date, items, total, updated_at: new Date().toISOString() };
+      const editing = returnedEditId;
       let saved = null;
-      const { data, error } = await supabase.from("orders").insert(payload).select("id,pay_proof").single();
-      if (error) {
-        const dup = error.code === "23505" || /duplicate|unique/i.test(error.message || "");
-        if (!dup) throw error;
-        const { data: existing, error: findErr } = await supabase.from("orders").select("*").eq("user_id", profile.id).eq("order_date", date).maybeSingle();
-        if (findErr || !existing) throw error;
-        const patch = { ...withNewBatch(existing, items, total), collector_id: collectorId };
-        const { data: updated, error: upErr } = await supabase.from("orders").update(patch).eq("id", existing.id).select("id,pay_proof").single();
-        if (upErr) throw upErr;
-        saved = updated || existing;
-      } else {
+      if (editing) {
+        const { data, error } = await supabase.from("orders").update({
+          items,
+          total,
+          collector_id: collectorId,
+          returned: false,
+          pay_proof: null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", editing).select("id,pay_proof").single();
+        if (error) throw error;
         saved = data;
+        markHistorySent(editing, items, total, collectorId);
+        setReturnedEditId("");
+      } else {
+        const payload = { user_id: profile.id, collector_id: collectorId, order_date: date, items, total, updated_at: new Date().toISOString() };
+        const { data, error } = await supabase.from("orders").insert(payload).select("id,pay_proof").single();
+        if (error) {
+          const dup = error.code === "23505" || /duplicate|unique/i.test(error.message || "");
+          if (!dup) throw error;
+          const { data: existing, error: findErr } = await supabase.from("orders").select("*").eq("user_id", profile.id).eq("order_date", date).maybeSingle();
+          if (findErr || !existing) throw error;
+          const patch = { ...withNewBatch(existing, items, total), collector_id: collectorId };
+          const { data: updated, error: upErr } = await supabase.from("orders").update(patch).eq("id", existing.id).select("id,pay_proof").single();
+          if (upErr) throw upErr;
+          saved = updated || existing;
+        } else {
+          saved = data;
+        }
       }
       const count = cartCount;
       setCart({});
@@ -891,21 +1087,66 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
         pendingCollector.current = collectorId;
         pendingOrderId.current = saved?.id || "";
       } else await openPay(collectorId, saved);
-      showToast("أوردر جديد اتقفل. ادفع بإنستاباي أو كاش.");
+      showToast(editing ? "الأوردر اتبعت تاني للمأمور." : "أوردر جديد اتقفل. ادفع بإنستاباي أو كاش.");
     } catch (e) { showToast(e.message || "الأوردر ما اتحفظش. جرّب تاني.", "err"); }
     finally { setSubmitting(false); }
   };
 
   const cat = shopCats.find((c) => c.id === activeCat) || shopCats[0];
   const needle = q.trim();
-  const shown = (cat?.items || []).filter((it) => {
-    if (!needle) return true;
-    const blob = `${it.name_ar || ""} ${it.name || ""}`.toLowerCase();
-    return blob.includes(needle.toLowerCase());
-  });
+  const searching = !!needle;
+  const shown = searching
+    ? catalog.flatMap((c) => (c.items || []).filter((it) => matchesItemSearch(it, c, needle)).map((it) => ({ ...it, _srcCat: c })))
+    : (cat?.items || []);
   const firstName = (profile.name || "").split(" ")[0] || "معلم";
   const admin = isAdminUser(profile);
+  const returnedToday = history.filter((o) => o.order_date === date && isOrderReturned(o));
   const hideDock = !!(pick || cartOpen || payOpen || bravo?.src);
+  const shopDepth = (bravo?.src ? 1 : 0) + (pick ? 1 : 0) + (payOpen ? 1 : 0) + (cartOpen ? 1 : 0) + (tab === "history" ? 1 : 0) + (tab === "menu" && searching ? 1 : 0);
+
+  const goShopBack = useCallback(() => {
+    if (bravo?.src) { closeBravo(); return true; }
+    if (pick) { setPick(null); return true; }
+    if (payOpen) { setPayOpen(false); return true; }
+    if (cartOpen) { abandonReturnedEdit(); return true; }
+    if (tab === "history") { setTab("menu"); return true; }
+    if (q.trim()) { setQ(""); return true; }
+    return false;
+  }, [bravo?.src, pick, payOpen, cartOpen, tab, q, closeBravo, abandonReturnedEdit]);
+
+  useEffect(() => {
+    if (shopDepth > shopDepthRef.current) window.history.pushState({ shop: 1 }, "");
+    shopDepthRef.current = shopDepth;
+  }, [shopDepth]);
+
+  useEffect(() => {
+    const onPop = () => { goShopBack(); };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [goShopBack]);
+
+  const requestShopBack = () => {
+    if (shopDepthRef.current > 0 && window.history.state?.shop) {
+      window.history.back();
+      return;
+    }
+    goShopBack();
+  };
+
+  const leavePay = () => {
+    if (payMethod !== "cash" && !proofDone) {
+      showToast("تقدر تدفع بعدين من أرشيفي.");
+    }
+    requestShopBack();
+  };
+
+  const finishPay = () => {
+    if (payMethod !== "cash" && !proofDone) {
+      showToast("ارفع سكرين التحويل، أو اختار هدفع كاش.", "err");
+      return;
+    }
+    requestShopBack();
+  };
 
   const cartBody = (
     !cartLines.length ? <p style={{ ...S.cartEmpty, textAlign: "right" }} dir="rtl">العربية فاضية يا باشا… الجوع كافر</p> : (
@@ -961,6 +1202,9 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
 
       {tab === "history" ? (
         <div style={U.hist}>
+          <div style={U.sheetHead}>
+            <BackBtn onClick={requestShopBack} />
+          </div>
           {admin && (
             <>
               <h1 style={U.heroA}>نازلة عليك</h1>
@@ -989,6 +1233,8 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
                   title={g.orders.length > 1 ? `أوردر ${orderNo(history, o)}` : "الأوردر"}
                   collectorName={o.collector?.name}
                   onReorder={reorder}
+                  onFix={beginReturnedEdit}
+                  onCancel={cancelReturnedOrder}
                   onPay={g.date === date ? () => openPay(o.collector_id, o) : undefined}
                 />
               ))}
@@ -1006,16 +1252,27 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
               عندك {inbox.length} أوردر نازل عليك — افتح المكتب
             </button>
           )}
+          {returnedToday.length > 0 && (
+            <button type="button" style={S.inboxBanner} onClick={() => setTab("history")}>
+              المأمور رجّع {returnedToday.length === 1 ? "أوردر" : `${returnedToday.length} أوردرات`} — عدّل أو ألغي من أرشيفي
+            </button>
+          )}
           <div style={U.search}>
             <Search size={18} color="#9A9A9A" />
             <input
               style={U.searchInput}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="دور على سندوتش"
+              placeholder="دور على أي صنف في المنيو"
               dir="rtl"
             />
+            {searching && (
+              <button type="button" style={U.searchClear} onClick={requestShopBack} aria-label="امسح البحث">
+                <X size={18} />
+              </button>
+            )}
           </div>
+          {!searching && (
           <div style={U.catBand}>
             <div className="catRail" style={U.catRail}>
               {shopCats.map((c) => {
@@ -1031,7 +1288,11 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
               })}
             </div>
           </div>
+          )}
           <div style={U.grid}>
+            {searching && shown.length > 0 && (
+              <p style={U.searchHint}>نتائج من كل المنيو ({shown.length})</p>
+            )}
             {!shown.length && <p style={{ gridColumn: "1 / -1", textAlign: "center", color: "#888", fontWeight: 700 }}>مفيش حاجة بالاسم ده.</p>}
             {shown.map((it) => {
               const src = srcCatOf(cat, it);
@@ -1051,7 +1312,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
 
       {!hideDock && (
         <nav style={U.dock}>
-          <button type="button" style={{ ...U.dockBtn, ...(tab === "menu" && !cartOpen ? U.dockOn : {}) }} onClick={() => { setTab("menu"); setCartOpen(false); }} aria-label="المنيو"><Home size={20} /></button>
+          <button type="button" style={{ ...U.dockBtn, ...(tab === "menu" && !cartOpen ? U.dockOn : {}) }} onClick={() => { if (tab === "history") requestShopBack(); else { setTab("menu"); setCartOpen(false); } }} aria-label="المنيو"><Home size={20} /></button>
           <button type="button" style={{ ...U.dockBtn, ...(tab === "history" ? U.dockOn : {}) }} onClick={() => { setTab("history"); setCartOpen(false); }} aria-label="أرشيفي"><ClipboardList size={20} /></button>
           <button type="button" style={{ ...U.dockBtn, ...(cartOpen ? U.dockOn : {}) }} onClick={() => { setTab("menu"); setCartOpen(true); }} aria-label="العربية">
             <ShoppingBag size={20} />
@@ -1068,23 +1329,37 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
       )}
 
       {cartOpen && (
-        <div style={U.sheetScrim} onClick={() => setCartOpen(false)} role="presentation">
+        <div style={U.sheetScrim} onClick={requestShopBack} role="presentation">
           <div style={{ ...U.sheet, ...(cartLines.length ? { height: "92dvh" } : {}) }} onClick={(e) => e.stopPropagation()} dir="rtl">
             <div style={U.sheetGrab} />
-            <h2 style={U.sheetTitle}>العربية</h2>
+            <div style={U.sheetHead}>
+              <BackBtn onClick={requestShopBack} />
+              <h2 style={U.sheetTitle}>{returnedEditId ? "عدّل الأوردر" : "العربية"}</h2>
+            </div>
             <div style={U.sheetBody}>{cartBody}</div>
-            {cartLines.length > 0 && (
+            {(cartLines.length > 0 || returnedEditId) && (
               <div style={U.sheetBar}>
-                <button style={{ ...U.addCart, width: "100%", opacity: submitting || !collectorId ? 0.7 : 1 }} onClick={submit} disabled={submitting || !collectorId}>
-                  {submitting ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : <><Check size={16} /> على مسئوليتي</>}
-                </button>
+                {returnedEditId && (
+                  <button
+                    type="button"
+                    style={{ ...S.ghostBtn, width: "100%", justifyContent: "center", marginBottom: 8 }}
+                    onClick={requestShopBack}
+                  >
+                    سيّب التعديل
+                  </button>
+                )}
+                {cartLines.length > 0 && (
+                  <button style={{ ...U.addCart, width: "100%", opacity: submitting || !collectorId ? 0.7 : 1 }} onClick={submit} disabled={submitting || !collectorId}>
+                    {submitting ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : <><Check size={16} /> {returnedEditId ? "ابعت تاني للمأمور" : "على مسئوليتي"}</>}
+                  </button>
+                )}
               </div>
             )}
           </div>
         </div>
       )}
 
-      {pick && <ItemDetail pick={pick} onClose={() => setPick(null)} onAdd={addN} />}
+      {pick && <ItemDetail pick={pick} onClose={requestShopBack} onAdd={addN} />}
 
       {bravo?.src && (
         <div style={S.bravoScrim} onClick={closeBravo} role="presentation">
@@ -1107,9 +1382,12 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
         </div>
       )}
       {payOpen && (
-        <div style={S.payScrim} onClick={closePay} role="presentation">
+        <div style={S.payScrim} onClick={leavePay} role="presentation">
           <div style={S.payCardModal} onClick={(e) => e.stopPropagation()} dir="rtl">
             <div style={S.payModalBody}>
+              <div style={U.sheetHead}>
+                <BackBtn onClick={leavePay} />
+              </div>
               <Logo size="lock" />
               <h2 style={{ ...S.brandTitle, marginTop: 8, fontSize: 20 }}>ادفع وإنت مطمن</h2>
               <p style={{ ...S.brandSub, marginBottom: 10 }}>اختار هتدفع إزاي</p>
@@ -1167,7 +1445,7 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
               <button
                 type="button"
                 style={{ ...S.primaryBtn, width: "100%", opacity: (payMethod === "cash" || proofDone) ? 1 : 0.55 }}
-                onClick={closePay}
+                onClick={finishPay}
               >
                 {payMethod === "cash" || proofDone ? "تمام التمام" : "ارفع السكرين أو اختار كاش"}
               </button>
@@ -1181,16 +1459,50 @@ function ShopView({ catalog, profile, showToast, signOut, setView }) {
 }
 
 /* ─────────────── Admin ─────────────── */
-function AdminOrderCard({ o, siblings, onMarkPaid, hideCollector }) {
+function AdminOrderCard({ o, siblings, catalog = [], canManage, onMarkPaid, onReturn, onClose, onCancelOrder, onSaveItems, hideCollector }) {
   const [open, setOpen] = useState(false);
+  const [addQ, setAddQ] = useState("");
+  const [addPick, setAddPick] = useState(null);
   const extra = siblings.filter((x) => x.user_id === o.user_id).length > 1
     ? ` · ${orderNo(siblings.filter((x) => x.user_id === o.user_id), o)}`
     : "";
   const due = money(foodOf(o.items) + DELIVERY_FEE);
   const itemCount = (o.items || []).reduce((s, l) => s + Number(l.qty || 0), 0);
   const collectorLine = o.collectorName ? `نازل على ${o.collectorName}` : "من غير مأمور";
+  const returned = isOrderReturned(o);
+  const closed = isOrderClosed(o);
+  const needle = addQ.trim().toLowerCase();
+  const addHits = !canManage || !needle ? [] : (catalog || []).flatMap((cat) => (
+    (cat.items || []).filter((it) => `${it.name_ar || ""} ${it.name || ""}`.toLowerCase().includes(needle))
+      .slice(0, 8)
+      .map((it) => ({ cat, it }))
+  )).slice(0, 8);
+
+  const bump = (key, d) => {
+    const next = [];
+    for (const l of o.items || []) {
+      const k = lineKey(l);
+      if (k !== key) { next.push(l); continue; }
+      const qty = Number(l.qty || 0) + d;
+      if (qty > 0) next.push({ ...l, key: k, qty });
+    }
+    if (!next.length) return onSaveItems(o.id, next);
+    onSaveItems(o.id, next);
+  };
+
+  const addFromMenu = (cat, it, tier) => {
+    const line = makeOrderLine(cat, it, tier, 1);
+    const exists = (o.items || []).find((l) => lineKey(l) === line.key);
+    const next = exists
+      ? (o.items || []).map((l) => (lineKey(l) === line.key ? { ...l, qty: Number(l.qty || 0) + 1 } : l))
+      : [...(o.items || []), line];
+    onSaveItems(o.id, next);
+    setAddPick(null);
+    setAddQ("");
+  };
+
   return (
-    <div style={{ ...S.orderRow, ...(o.paid ? S.orderRowPaid : {}) }}>
+    <div style={{ ...S.orderRow, ...(o.paid ? S.orderRowPaid : returned ? S.orderRowReturned : {}) }}>
       <button type="button" style={S.orderRowMain} onClick={() => setOpen((v) => !v)}>
         <div style={{ minWidth: 0, textAlign: "right" }}>
           <div style={{ ...S.personName, fontFamily: "'Cairo',sans-serif" }}>{o.name}{extra}</div>
@@ -1198,7 +1510,7 @@ function AdminOrderCard({ o, siblings, onMarkPaid, hideCollector }) {
             {teamLabel(o.department) || "من غير فريق"}
             {" · "}
             {itemCount} صنف
-            {isCashPay(o) ? " · كاش" : isShotProof(o.pay_proof) ? " · إنستاباي" : ""}
+            {closed ? " · مقفول" : returned ? " · راجع للعميل" : isCashPay(o) ? " · كاش" : isShotProof(o.pay_proof) ? " · إنستاباي" : ""}
           </div>
           {!hideCollector && <div style={S.collectorTag}>{collectorLine}</div>}
         </div>
@@ -1213,12 +1525,68 @@ function AdminOrderCard({ o, siblings, onMarkPaid, hideCollector }) {
           {o.phone
             ? <a href={`tel:${o.phone.replace(/\s/g, "")}`} style={S.payPhoneLink} dir="ltr"><Phone size={12} /> {o.phone}</a>
             : <div style={S.payPhone}>مفيش موبايل</div>}
-          {o.items.map((l) => (
-            <div key={l.key} style={S.personLine}>
-              <span>{l.qty}× {l.nameAr || l.name}{l.tierLabel ? <> <span style={S.tierTag}>{l.tierLabel}</span></> : null}</span>
-              <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+          {(o.items || []).map((l) => {
+            const k = lineKey(l);
+            return (
+              <div key={k} style={S.personLine}>
+                <span style={{ flex: 1 }}>{l.qty}× {l.nameAr || l.name}{l.tierLabel ? <> <span style={S.tierTag}>{l.tierLabel}</span></> : null}</span>
+                {canManage && (
+                  <span style={S.orderLineActs}>
+                    <button type="button" style={S.stepBtn} onClick={() => bump(k, -1)} aria-label="ناقص"><Minus size={13} /></button>
+                    <button type="button" style={S.stepBtn} onClick={() => bump(k, 1)} aria-label="زيادة"><Plus size={13} /></button>
+                    <button type="button" style={S.trashBtn} onClick={() => bump(k, -Number(l.qty || 1))} aria-label="شيل"><Trash2 size={15} /></button>
+                  </span>
+                )}
+                <span style={S.personLinePrice}>{money(l.price * l.qty)}</span>
+              </div>
+            );
+          })}
+          {canManage && (
+            <div style={S.orderAddBox}>
+              <div style={S.payEditTitle}>ضيف صنف</div>
+              <input
+                style={S.input}
+                value={addQ}
+                onChange={(e) => { setAddQ(e.target.value); setAddPick(null); }}
+                placeholder="دور على صنف"
+                dir="rtl"
+              />
+              {addHits.map(({ cat, it }) => {
+                const id = `${cat.id}::${it.id}`;
+                const open = addPick?.cat?.id === cat.id && addPick?.it?.id === it.id;
+                const tiers = tiersOf(it, cat.tiered);
+                return (
+                  <div key={id} style={{ marginTop: 6 }}>
+                    <button
+                      type="button"
+                      style={{ ...S.ghostBtn, width: "100%", justifyContent: "space-between" }}
+                      onClick={() => {
+                        if (tiers.length === 1) addFromMenu(cat, it, tiers[0].tier);
+                        else setAddPick(open ? null : { cat, it });
+                      }}
+                    >
+                      <span>{it.name_ar || it.name}</span>
+                      <Plus size={14} />
+                    </button>
+                    {open && tiers.length > 1 && (
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6, padding: "0 2px 4px" }}>
+                        {tiers.map((t) => (
+                          <button
+                            key={t.tier}
+                            type="button"
+                            style={S.chip}
+                            onClick={() => addFromMenu(cat, it, t.tier)}
+                          >
+                            {(tierLabel(cat.id, t.tier) || "السعر") + " · " + money(t.price)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-          ))}
+          )}
           <Bill food={foodOf(o.items)} />
           {isShotProof(o.pay_proof) ? (
             <div style={S.proofBox}>
@@ -1231,14 +1599,42 @@ function AdminOrderCard({ o, siblings, onMarkPaid, hideCollector }) {
         </div>
       )}
       <div style={S.orderRowFoot}>
-        {o.paid ? (
-          <span style={S.paidStamp}><Check size={13} /> دافع</span>
+        {closed ? (
+          <>
+            <span style={S.orderClosedStamp}>مقفول</span>
+            <div style={S.orderRowActs}>
+              {canManage && <button type="button" style={S.ghostBtn} onClick={() => onCancelOrder(o.id)}>ألغي الأوردر</button>}
+              {o.paid ? <span style={S.paidStamp}><Check size={13} /> دافع</span> : (
+                <button type="button" style={S.paidMark} onClick={() => onMarkPaid(o.id)}>
+                  <Check size={13} /> علّم دافع
+                </button>
+              )}
+            </div>
+          </>
+        ) : returned ? (
+          <>
+            <span style={S.orderBackStamp}>راجع للعميل</span>
+            <button type="button" style={S.ghostBtn} onClick={() => onClose(o.id)}>اقفل الأوردر</button>
+          </>
         ) : (
           <>
-            <span style={S.paidWait}>لسه</span>
-            <button type="button" style={S.paidMark} onClick={() => onMarkPaid(o.id)}>
-              <Check size={13} /> علّم دافع
-            </button>
+            {o.paid ? (
+              <span style={S.paidStamp}><Check size={13} /> دافع</span>
+            ) : (
+              <span style={S.paidWait}>لسه</span>
+            )}
+            <div style={S.orderRowActs}>
+              {canManage && <button type="button" style={S.ghostBtn} onClick={() => onCancelOrder(o.id)}>ألغي الأوردر</button>}
+              {!o.paid && (
+                <button type="button" style={S.ghostBtn} onClick={() => onReturn(o.id)}>رجّع للعميل</button>
+              )}
+              <button type="button" style={S.ghostBtn} onClick={() => onClose(o.id)}>اقفل الأوردر</button>
+              {!o.paid && (
+                <button type="button" style={S.paidMark} onClick={() => onMarkPaid(o.id)}>
+                  <Check size={13} /> علّم دافع
+                </button>
+              )}
+            </div>
           </>
         )}
       </div>
@@ -1353,6 +1749,200 @@ function SuperUserCard({ p, meId, busy, open, onToggle, onSave, onPassword, onDe
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function MenuPricesPanel({ catalog, loadMenu, showToast }) {
+  const [openCat, setOpenCat] = useState("");
+  const [draft, setDraft] = useState({});
+  const [busyId, setBusyId] = useState("");
+
+  useEffect(() => {
+    setDraft((prev) => {
+      const next = { ...prev };
+      for (const cat of catalog || []) {
+        for (const it of cat.items || []) {
+          if (next[it.id]) continue;
+          const fields = {};
+          for (const { tier, price } of tiersOf(it, cat.tiered)) {
+            fields[`price_${tier}`] = String(price);
+          }
+          next[it.id] = fields;
+        }
+      }
+      return next;
+    });
+  }, [catalog]);
+
+  const setField = (itemId, col, value) => {
+    setDraft((d) => ({ ...d, [itemId]: { ...(d[itemId] || {}), [col]: value } }));
+  };
+
+  const itemDirty = (it, cat) => {
+    const d = draft[it.id] || {};
+    return tiersOf(it, cat.tiered).some(({ tier, price }) => {
+      const raw = String(d[`price_${tier}`] ?? "").trim();
+      return Number(raw) !== Number(price);
+    });
+  };
+
+  const patchFor = (it, cat) => {
+    const d = draft[it.id] || {};
+    const patch = {};
+    for (const { tier, price } of tiersOf(it, cat.tiered)) {
+      const col = `price_${tier}`;
+      const raw = String(d[col] ?? "").trim().replace(",", ".");
+      const n = Number(raw);
+      if (raw === "" || !Number.isFinite(n) || n < 0) {
+        throw new Error("السعر لازم رقم من صفر وطالع.");
+      }
+      if (n !== Number(price)) patch[col] = n;
+    }
+    return patch;
+  };
+
+  const applyDraft = (it, cat, patch) => {
+    const fields = {};
+    for (const { tier, price } of tiersOf({ ...it, ...patch }, cat.tiered)) {
+      fields[`price_${tier}`] = String(patch[`price_${tier}`] ?? price);
+    }
+    setDraft((d) => ({ ...d, [it.id]: fields }));
+  };
+
+  const saveItem = async (it, cat) => {
+    let patch;
+    try { patch = patchFor(it, cat); }
+    catch (e) { showToast(e.message, "err"); return; }
+    if (!Object.keys(patch).length) return showToast("مفيش تغيير.");
+    setBusyId(it.id);
+    try {
+      const { error } = await supabase.from("menu_items").update(patch).eq("id", it.id);
+      if (error) throw error;
+      applyDraft(it, cat, patch);
+      await loadMenu();
+      showToast("السعر اتحفظ. الأوردرات القديمة زي ما هي.");
+    } catch (e) {
+      showToast(e.message || "السعر ما اتحفظش.", "err");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  const saveCat = async (cat) => {
+    const dirty = (cat.items || []).filter((it) => itemDirty(it, cat));
+    if (!dirty.length) return showToast("مفيش تغيير في القسم ده.");
+    const patches = [];
+    try {
+      for (const it of dirty) patches.push({ it, patch: patchFor(it, cat) });
+    } catch (e) {
+      showToast(e.message, "err");
+      return;
+    }
+    setBusyId(cat.id);
+    try {
+      for (const { it, patch } of patches) {
+        if (!Object.keys(patch).length) continue;
+        const { error } = await supabase.from("menu_items").update(patch).eq("id", it.id);
+        if (error) throw error;
+        applyDraft(it, cat, patch);
+      }
+      await loadMenu();
+      showToast("أسعار القسم اتحفظت. الأوردرات القديمة زي ما هي.");
+    } catch (e) {
+      showToast(e.message || "الأسعار ما اتحفظتش.", "err");
+    } finally {
+      setBusyId("");
+    }
+  };
+
+  if (!(catalog || []).length) {
+    return <p style={S.cartEmpty}>المنيو فاضي.</p>;
+  }
+
+  return (
+    <div>
+      <p style={{ ...S.finePrint, marginTop: 0, marginBottom: 14 }}>
+        غيّر السعر واحفظ. الأوردرات اللي اتقفلت قبل كده مش هتتأثر.
+      </p>
+      {(catalog || []).map((cat) => {
+        const open = openCat === cat.id;
+        const dirtyCount = (cat.items || []).filter((it) => itemDirty(it, cat)).length;
+        return (
+          <div key={cat.id} style={S.teamBlock}>
+            <button
+              type="button"
+              style={{ ...S.teamHead, ...(open ? S.teamHeadOpen : {}) }}
+              onClick={() => setOpenCat(open ? "" : cat.id)}
+              aria-expanded={open}
+            >
+              <div style={{ minWidth: 0 }}>
+                <h3 style={S.teamTitle}>{cat.name_ar || cat.name}</h3>
+                <div style={S.teamMeta}>{(cat.items || []).length} صنف{dirtyCount ? ` · ${dirtyCount} متغيّر` : ""}</div>
+              </div>
+              <div style={{ flexShrink: 0, textAlign: "left" }}>
+                <div style={S.userFoldHint}>{open ? "اقفل" : "الأسعار"}</div>
+                <ChevronDown size={16} style={{ display: "block", margin: "4px 0 0 auto", transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+              </div>
+            </button>
+            {open && (
+              <div style={{ padding: "0 6px 10px" }}>
+                {(cat.items || []).map((it) => {
+                  const dirty = itemDirty(it, cat);
+                  const fields = tiersOf(it, cat.tiered);
+                  return (
+                    <div key={it.id} style={S.priceRow}>
+                      <div style={S.priceRowName}>{it.name_ar || it.name}</div>
+                      {!fields.length ? (
+                        <p style={S.errText}>مفيش سعر متسجل للصنف ده.</p>
+                      ) : (
+                        <>
+                          <div style={S.priceFields}>
+                            {fields.map(({ tier }) => {
+                              const col = `price_${tier}`;
+                              const label = tierLabel(cat.id, tier) || "السعر";
+                              return (
+                                <label key={col}>
+                                  <span style={S.priceFieldLabel}>{label}</span>
+                                  <input
+                                    style={S.input}
+                                    inputMode="decimal"
+                                    value={draft[it.id]?.[col] ?? ""}
+                                    onChange={(e) => setField(it.id, col, e.target.value)}
+                                    disabled={!!busyId}
+                                  />
+                                </label>
+                              );
+                            })}
+                          </div>
+                          <button
+                            type="button"
+                            style={{ ...S.primaryBtn, width: "100%", opacity: busyId || !dirty ? 0.7 : 1 }}
+                            onClick={() => saveItem(it, cat)}
+                            disabled={!!busyId || !dirty}
+                          >
+                            {busyId === it.id ? "ثواني…" : "احفظ"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+                {dirtyCount > 0 && (
+                  <button
+                    type="button"
+                    style={{ ...S.ghostBtn, width: "100%", justifyContent: "center", marginTop: 10, opacity: busyId ? 0.7 : 1 }}
+                    onClick={() => saveCat(cat)}
+                    disabled={!!busyId}
+                  >
+                    {busyId === cat.id ? "ثواني…" : `احفظ القسم (${dirtyCount})`}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1476,7 +2066,7 @@ function SuperUsersPanel({ showToast, meId }) {
   );
 }
 
-function AdminView({ narrow, showToast, profile }) {
+function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
   const today = todayStr();
   const superAdmin = isSuperAdmin(profile);
   const [loading, setLoading] = useState(true);
@@ -1515,7 +2105,7 @@ function AdminView({ narrow, showToast, profile }) {
       setOfficers(staff);
       let query = supabase
         .from("orders")
-        .select("id,user_id,collector_id,order_date,items,total,paid,pay_proof,updated_at,profiles!orders_user_id_profiles_fkey(name,phone,department),collector:profiles!orders_collector_id_fkey(id,name)")
+        .select("id,user_id,collector_id,order_date,items,total,paid,pay_proof,returned,closed,cancelled,updated_at,profiles!orders_user_id_profiles_fkey(name,phone,department),collector:profiles!orders_collector_id_fkey(id,name)")
         .order("order_date", { ascending: false })
         .order("updated_at", { ascending: true });
       if (!superAdmin) query = query.eq("collector_id", profile.id);
@@ -1523,7 +2113,7 @@ function AdminView({ narrow, showToast, profile }) {
       if (error) {
         let fallback = supabase
           .from("orders")
-          .select("id,user_id,collector_id,order_date,items,total,paid,pay_proof,updated_at,profiles!orders_user_id_profiles_fkey(name,phone,department)")
+          .select("id,user_id,collector_id,order_date,items,total,paid,pay_proof,returned,closed,cancelled,updated_at,profiles!orders_user_id_profiles_fkey(name,phone,department)")
           .order("order_date", { ascending: false })
           .order("updated_at", { ascending: true });
         if (!superAdmin) fallback = fallback.eq("collector_id", profile.id);
@@ -1564,25 +2154,28 @@ function AdminView({ narrow, showToast, profile }) {
     [rows, selectedDate]
   );
   const visibleOrders = useMemo(() => {
-    if (!superAdmin) return dayOrders.filter((o) => o.collector_id === profile.id);
-    if (!pickedOfficer) return [];
-    if (pickedOfficer === "none") return dayOrders.filter((o) => !o.collector_id);
-    return dayOrders.filter((o) => o.collector_id === pickedOfficer);
+    const office = superAdmin
+      ? (!pickedOfficer ? [] : pickedOfficer === "none"
+        ? dayOrders.filter((o) => !o.collector_id)
+        : dayOrders.filter((o) => o.collector_id === pickedOfficer))
+      : dayOrders.filter((o) => o.collector_id === profile.id);
+    return office.filter((o) => !isOrderReturned(o) && !isOrderCancelled(o));
   }, [dayOrders, superAdmin, profile.id, pickedOfficer]);
-  const dayFood = useMemo(() => visibleOrders.reduce((s, o) => s + foodOf(o.items), 0), [visibleOrders]);
-  const unpaid = useMemo(() => visibleOrders.filter((o) => !o.paid).length, [visibleOrders]);
-  const dayDue = dayFood + DELIVERY_FEE * visibleOrders.length;
+  const firmOrders = visibleOrders;
+  const dayFood = useMemo(() => firmOrders.reduce((s, o) => s + foodOf(o.items), 0), [firmOrders]);
+  const unpaid = useMemo(() => firmOrders.filter((o) => !o.paid).length, [firmOrders]);
+  const dayDue = dayFood + DELIVERY_FEE * firmOrders.length;
 
   const byCategory = useMemo(() => {
     const cats = {};
-    for (const o of visibleOrders) for (const l of o.items) {
+    for (const o of firmOrders) for (const l of o.items) {
       const c = (cats[l.categoryName] = cats[l.categoryName] || { name: l.categoryName, lines: {}, subtotal: 0 });
       const lk = `${l.itemId}::${l.tier}`;
       if (!c.lines[lk]) c.lines[lk] = { name: l.nameAr || l.name, tierLabel: l.tierLabel, price: l.price, qty: 0 };
       c.lines[lk].qty += l.qty; c.subtotal += l.price * l.qty;
     }
     return Object.values(cats).map((c) => ({ ...c, lines: Object.values(c.lines).sort((a, b) => b.qty - a.qty) }));
-  }, [visibleOrders]);
+  }, [firmOrders]);
 
   const byTeam = useMemo(() => {
     const map = {};
@@ -1602,21 +2195,22 @@ function AdminView({ narrow, showToast, profile }) {
     });
     return keys.map((k) => {
       const orders = map[k];
-      const food = orders.reduce((s, o) => s + foodOf(o.items), 0);
+      const firm = orders.filter((o) => !isOrderReturned(o));
+      const food = firm.reduce((s, o) => s + foodOf(o.items), 0);
       return {
         id: k,
         label: teamLabel(k) || "من غير فريق",
         orders,
         food,
-        due: food + DELIVERY_FEE * orders.length,
-        unpaid: orders.filter((o) => !o.paid).length,
+        due: food + DELIVERY_FEE * firm.length,
+        unpaid: firm.filter((o) => !o.paid).length,
       };
     });
   }, [visibleOrders]);
 
   const markPaid = async (orderId) => {
     const current = rows.find((r) => r.id === orderId);
-    if (current?.paid) return;
+    if (current?.paid || isOrderReturned(current)) return;
     if (!window.confirm("هتعلّم الأوردر دافع؟ الخطوة دي مش هترجع.")) return;
     setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, paid: true } : r)));
     const { parentId, batchId } = parseOrderId(orderId);
@@ -1635,20 +2229,106 @@ function AdminView({ narrow, showToast, profile }) {
     else showToast("اتعلّم دافع.");
   };
 
+  const patchParent = async (orderId, patch, revert) => {
+    const { parentId } = parseOrderId(orderId);
+    setRows((rs) => rs.map((r) => (parseOrderId(r.id).parentId === parentId ? { ...r, ...patch } : r)));
+    const { error } = await supabase.from("orders").update({ ...patch, updated_at: new Date().toISOString() }).eq("id", parentId);
+    if (error) {
+      showToast(error.message || "التحديث ما نفعش.", "err");
+      setRows((rs) => rs.map((r) => (parseOrderId(r.id).parentId === parentId ? { ...r, ...revert } : r)));
+      return false;
+    }
+    return true;
+  };
+
+  const returnOrder = async (orderId) => {
+    const current = rows.find((r) => r.id === orderId);
+    if (!current || isOrderClosed(current) || current.paid || isOrderReturned(current)) return;
+    if (!window.confirm("هترجّع الأوردر للعميل يعدّله؟")) return;
+    if (await patchParent(orderId, { returned: true, pay_proof: null }, { returned: false, pay_proof: current.pay_proof })) {
+      showToast("الأوردر رجع للعميل واختفى من المكتب.");
+    }
+  };
+
+  const closeOrder = async (orderId) => {
+    const current = rows.find((r) => r.id === orderId);
+    if (!current || isOrderClosed(current)) return;
+    if (!window.confirm("هتقفل الأوردر؟ بعد كده مش هترجّعه للعميل.")) return;
+    if (await patchParent(orderId, { closed: true, returned: false }, { closed: false, returned: current.returned })) {
+      showToast("الأوردر اتقفل.");
+    }
+  };
+
+  const saveOrderItems = async (orderId, lines) => {
+    if (!superAdmin) return;
+    if (!lines.length) {
+      showToast("مش هتسيب الأوردر فاضي. ألغي الأوردر لو مش عايزه.", "err");
+      return;
+    }
+    const current = rows.find((r) => r.id === orderId);
+    if (!current || isOrderCancelled(current)) return;
+    const { parentId, batchId } = parseOrderId(orderId);
+    const prevItems = current.items;
+    const prevTotal = current.total;
+    const nextTotal = foodOf(lines) + DELIVERY_FEE;
+    setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, items: lines, total: nextTotal } : r)));
+    let patch;
+    if (!batchId) {
+      patch = { items: lines, total: nextTotal, updated_at: new Date().toISOString() };
+    } else {
+      const { data, error } = await supabase.from("orders").select("items").eq("id", parentId).single();
+      if (error) {
+        showToast(error.message || "الأصناف ما اتحدثتش.", "err");
+        setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, items: prevItems, total: prevTotal } : r)));
+        return;
+      }
+      patch = setBatchLines(data.items, batchId, lines, DELIVERY_FEE);
+    }
+    const { error } = await supabase.from("orders").update(patch).eq("id", parentId);
+    if (error) {
+      showToast(error.message || "الأصناف ما اتحدثتش.", "err");
+      setRows((rs) => rs.map((r) => (r.id === orderId ? { ...r, items: prevItems, total: prevTotal } : r)));
+    }
+  };
+
+  const cancelOfficeOrder = async (orderId) => {
+    if (!superAdmin) return;
+    const current = rows.find((r) => r.id === orderId);
+    if (!current || isOrderCancelled(current)) return;
+    if (!window.confirm("هتلغي الأوردر؟ العميل هيشوف إنه اتلغى، ومش هيرجع للمكتب.")) return;
+    if (await patchParent(orderId, { cancelled: true, returned: false }, { cancelled: false, returned: current.returned })) {
+      showToast("الأوردر اتلغى.");
+    }
+  };
+
   const buildText = () => {
-    let out = `${APP_NAME} — أوردر المكتب\n${prettyDate(selectedDate)}\n${"=".repeat(36)}\n\nالأوردر الكامل للمحل\n${"-".repeat(36)}\n`;
-    byCategory.forEach((c) => { out += `\n${c.name}\n`; c.lines.forEach((l) => (out += `  ${l.qty}× ${l.name}${l.tierLabel ? ` [${l.tierLabel}]` : ""}  ${money(l.price * l.qty)}\n`)); });
-    out += `\n${"=".repeat(36)}\nكل واحد وحقه\n${"-".repeat(36)}\n`;
-    visibleOrders.forEach((o) => {
-      out += `\n${o.name}${teamLabel(o.department) ? ` · ${teamLabel(o.department)}` : ""}${o.collectorName ? ` · عند ${o.collectorName}` : ""} — ${o.phone}${o.paid ? "  (دافع)" : isCashPay(o) ? "  (كاش)" : ""}\n`;
-      o.items.forEach((l) => (out += `  ${l.qty}× ${l.nameAr || l.name}${l.tierLabel ? ` [${l.tierLabel}]` : ""}  ${money(l.price * l.qty)}\n`));
-      out += `  يدفع: ${money(foodOf(o.items) + DELIVERY_FEE)}\n`;
+    const lines = [`أوردر المحل — ${prettyDate(selectedDate)}`, ""];
+    if (!byCategory.length) {
+      lines.push("مفيش أوردر.");
+      return lines.join("\n");
+    }
+    byCategory.forEach((c) => {
+      lines.push(c.name);
+      c.lines.forEach((l) => {
+        lines.push(`${l.qty}× ${l.name}${l.tierLabel ? ` ${l.tierLabel}` : ""}`);
+      });
+      lines.push("");
     });
-    out += `\n${"=".repeat(36)}\nناس: ${visibleOrders.length}\nأكل المحل: ${money(dayFood)}\nتوصيل: ${money(DELIVERY_FEE * visibleOrders.length)}\nحساب اليوم: ${money(dayDue)}\n\n${PRICE_NOTE}\n`;
-    return out;
+    return `${lines.join("\n").trim()}\n`;
   };
   const copyList = async () => { try { await navigator.clipboard.writeText(buildText()); showToast("الأوردر اتنسخ. روح اقراه للمحل."); } catch { showToast("النسخ فشل — جرّب التصدير.", "err"); } };
-  const exportList = () => { try { const b = new Blob([buildText()], { type: "text/plain" }); const u = URL.createObjectURL(b); const a = document.createElement("a"); a.href = u; a.download = `hayat-mokafhet-elgoo-${selectedDate}.txt`; a.click(); URL.revokeObjectURL(u); showToast("الملف نزل."); } catch { showToast("التصدير فشل — جرّب انسخ.", "err"); } };
+  const exportList = () => {
+    try {
+      const b = new Blob([`\uFEFF${buildText()}`], { type: "text/plain;charset=utf-8" });
+      const u = URL.createObjectURL(b);
+      const a = document.createElement("a");
+      a.href = u;
+      a.download = `hayat-mokafhet-elgoo-${selectedDate}.txt`;
+      a.click();
+      URL.revokeObjectURL(u);
+      showToast("ملف أوردر المحل نزل.");
+    } catch { showToast("التصدير فشل — جرّب انسخ.", "err"); }
+  };
 
   const onQrFile = async (e) => {
     const file = e.target.files?.[0];
@@ -1730,15 +2410,20 @@ function AdminView({ narrow, showToast, profile }) {
         <div>
           <span style={S.dateEyebrow}>{superAdmin ? "مكتب المدير" : "مكتب المأمور"}</span>
           <h2 style={{ ...S.adminH, fontFamily: "'Cairo',sans-serif" }}>
-            {section === "staff" ? "المأمورين" : section === "look" ? "الهوية" : section === "report" ? "التقارير" : "الأوردرات"}
+            {section === "staff" ? "المأمورين" : section === "look" ? "الهوية" : section === "report" ? "التقارير" : section === "prices" ? "الأسعار" : "الأوردرات"}
           </h2>
         </div>
-        <button style={S.ghostBtn} onClick={() => load()}><RefreshCw size={15} /> حدّث</button>
+        <button style={S.ghostBtn} onClick={() => {
+          if (section === "prices") {
+            Promise.resolve(loadMenu?.()).catch((e) => showToast(e.message || "المنيو ما اتحملش.", "err"));
+          } else load();
+        }}><RefreshCw size={15} /> حدّث</button>
       </div>
 
       {superAdmin && (
         <div style={S.deskNav}>
           <button type="button" style={{ ...S.deskNavBtn, ...(section === "orders" ? S.deskNavOn : {}) }} onClick={() => setSection("orders")}>الأوردرات</button>
+          <button type="button" style={{ ...S.deskNavBtn, ...(section === "prices" ? S.deskNavOn : {}) }} onClick={() => setSection("prices")}>الأسعار</button>
           <button type="button" style={{ ...S.deskNavBtn, ...(section === "staff" ? S.deskNavOn : {}) }} onClick={() => setSection("staff")}>المأمورين</button>
           <button type="button" style={{ ...S.deskNavBtn, ...(section === "report" ? S.deskNavOn : {}) }} onClick={() => setSection("report")}>التقارير</button>
           <button type="button" style={{ ...S.deskNavBtn, ...(section === "look" ? S.deskNavOn : {}) }} onClick={() => setSection("look")}>الهوية</button>
@@ -1804,6 +2489,8 @@ function AdminView({ narrow, showToast, profile }) {
             </div>
           </div>
         </div>
+      ) : section === "prices" && superAdmin ? (
+        <MenuPricesPanel catalog={catalog} loadMenu={loadMenu} showToast={showToast} />
       ) : (
         <>
           <div style={S.dateBar}>
@@ -1818,7 +2505,7 @@ function AdminView({ narrow, showToast, profile }) {
           {superAdmin && (
             <div style={S.chipRow}>
               {officers.map((c) => {
-                const n = dayOrders.filter((o) => o.collector_id === c.id).length;
+                const n = dayOrders.filter((o) => o.collector_id === c.id && !isOrderReturned(o) && !isOrderCancelled(o)).length;
                 return (
                   <button
                     key={c.id}
@@ -1830,13 +2517,13 @@ function AdminView({ narrow, showToast, profile }) {
                   </button>
                 );
               })}
-              {dayOrders.some((o) => !o.collector_id) && (
+              {dayOrders.some((o) => !o.collector_id && !isOrderReturned(o) && !isOrderCancelled(o)) && (
                 <button
                   type="button"
                   style={{ ...S.chip, ...(pickedOfficer === "none" ? S.chipOn : {}) }}
                   onClick={() => setPickedOfficer("none")}
                 >
-                  من غير مأمور · {dayOrders.filter((o) => !o.collector_id).length}
+                  من غير مأمور · {dayOrders.filter((o) => !o.collector_id && !isOrderReturned(o) && !isOrderCancelled(o)).length}
                 </button>
               )}
             </div>
@@ -1856,13 +2543,13 @@ function AdminView({ narrow, showToast, profile }) {
             <button type="button" style={{ ...S.chip, ...(mode === "team" ? S.chipOn : {}) }} onClick={() => setMode("team")}>بالفرق</button>
             <button type="button" style={{ ...S.chip, ...(mode === "full" ? S.chipOn : {}) }} onClick={() => setMode("full")}>أوردر المحل</button>
           </div>
+          <div style={S.adminActions}>
+            <button style={S.primaryBtn} onClick={copyList}><ClipboardCopy size={16} /> انسخ للمحل</button>
+            <button style={S.ghostBtn} onClick={exportList}>نزّل ملف</button>
+          </div>
 
           {mode === "full" ? (
             <div style={S.fullWrap}>
-              <div style={S.adminActions}>
-                <button style={S.primaryBtn} onClick={copyList}><ClipboardCopy size={16} /> انسخ للمحل</button>
-                <button style={S.ghostBtn} onClick={exportList}>نزّل ملف</button>
-              </div>
               {byCategory.map((c) => (
                 <div key={c.name} style={S.catBlock}>
                   <div style={{ ...S.catBlockHead, fontFamily: "'Cairo',sans-serif" }}><span>{c.name}</span><span style={S.catBlockSub}>{money(c.subtotal)}</span></div>
@@ -1904,7 +2591,7 @@ function AdminView({ narrow, showToast, profile }) {
                     {open && (
                       <div style={{ ...S.orderList, padding: "0 6px 10px" }}>
                         {g.orders.map((o) => (
-                          <AdminOrderCard key={o.id} o={o} siblings={g.orders} onMarkPaid={markPaid} />
+                          <AdminOrderCard key={o.id} o={o} siblings={g.orders} catalog={catalog} canManage={superAdmin} onMarkPaid={markPaid} onReturn={returnOrder} onClose={closeOrder} onCancelOrder={cancelOfficeOrder} onSaveItems={saveOrderItems} />
                         ))}
                       </div>
                     )}
@@ -1916,7 +2603,7 @@ function AdminView({ narrow, showToast, profile }) {
           ) : (
             <div style={S.orderList}>
               {visibleOrders.map((o) => (
-                <AdminOrderCard key={o.id} o={o} siblings={visibleOrders} onMarkPaid={markPaid} />
+                <AdminOrderCard key={o.id} o={o} siblings={visibleOrders} catalog={catalog} canManage={superAdmin} onMarkPaid={markPaid} onReturn={returnOrder} onClose={closeOrder} onCancelOrder={cancelOfficeOrder} onSaveItems={saveOrderItems} />
               ))}
               {!visibleOrders.length && (
                 <p style={S.cartEmpty}>

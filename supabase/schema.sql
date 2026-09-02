@@ -51,6 +51,9 @@ create table if not exists public.orders (
   total       numeric not null default 0,
   paid        boolean not null default false,
   pay_proof   text,
+  returned    boolean not null default false, -- sent back so the customer can edit
+  closed      boolean not null default false, -- locked; cannot return after this
+  cancelled   boolean not null default false, -- super admin voided the order
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
@@ -122,6 +125,48 @@ create policy "orders self update" on public.orders for update using (auth.uid()
 create policy "orders self delete" on public.orders for delete using (auth.uid() = user_id);
 create policy "orders admin read"  on public.orders for select using (public.is_admin());
 create policy "orders admin update" on public.orders for update using (public.is_admin()); -- lets admin toggle "paid"
+
+-- Returned / closed: see supabase/order_return.sql (applied on live). Included here for new installs.
+create or replace function public.orders_guard_status()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  admin boolean := public.is_admin();
+begin
+  if old.closed then
+    new.closed := true;
+    new.returned := false;
+    new.items := old.items;
+    new.total := old.total;
+    new.collector_id := old.collector_id;
+    return new;
+  end if;
+  if new.closed then
+    new.returned := false;
+  end if;
+  if not admin then
+    new.closed := false;
+    new.paid := old.paid;
+    if not old.returned then
+      new.returned := false;
+      if new.items is distinct from old.items or new.total is distinct from old.total then
+        raise exception 'الأوردر مش راجع ليك. استنى المأمور.';
+      end if;
+      new.collector_id := old.collector_id;
+    end if;
+  elsif new.returned and (old.paid or old.closed) then
+    new.returned := false;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists orders_guard_status on public.orders;
+create trigger orders_guard_status
+  before update on public.orders
+  for each row execute function public.orders_guard_status();
 
 -- ---------- app_settings: InstaPay QR (admin can replace) ----------
 create table if not exists public.app_settings (
