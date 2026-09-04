@@ -1,5 +1,3 @@
-export const PING_GRACE_MS = 10 * 60 * 1000;
-
 export function groupOfficeRuns(orders) {
   const list = orders || [];
   const open = list.filter((o) => !o?.closed);
@@ -18,11 +16,8 @@ export function groupOfficeRuns(orders) {
   return runs;
 }
 
-export function runCanPing(run, now = Date.now()) {
-  if (!run) return false;
-  if (!run.closed) return true;
-  const at = Number(run.closedAt) || Math.max(0, ...(run.orders || []).map((o) => Date.parse(o.updated_at || 0) || 0));
-  return at > 0 && (now - at) < PING_GRACE_MS;
+export function runCanPing(run) {
+  return !!run;
 }
 
 export function isBatchedItems(items) {

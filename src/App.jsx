@@ -310,6 +310,12 @@ export default function App() {
   });
   const [toast, setToast] = useState(null);
   const [loginBravo, setLoginBravo] = useState(false);
+  const [recovery, setRecovery] = useState(() => {
+    try {
+      const blob = `${window.location.hash || ""} ${window.location.search || ""}`;
+      return blob.includes("type=recovery");
+    } catch { return false; }
+  });
   const narrow = useIsNarrow();
 
   const showToast = useCallback((msg, tone = "ok") => { setToast({ msg, tone }); setTimeout(() => setToast(null), 3400); }, []);
@@ -339,6 +345,12 @@ export default function App() {
     });
     const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
       if (!alive) return;
+      if (event === "PASSWORD_RECOVERY") {
+        setSession(s);
+        setAuthReady(true);
+        setRecovery(true);
+        return;
+      }
       if (event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") return;
       setSession(s);
       setAuthReady(true);
@@ -442,6 +454,16 @@ export default function App() {
     <MemePop src="/memes/auth-bravo.jpg" caption="برافو عليك" onClose={() => setLoginBravo(false)} />
   ) : null;
 
+  if (recovery && session) {
+    return (
+      <ResetPasswordScreen
+        onDone={() => {
+          setRecovery(false);
+          bootedUserRef.current = null;
+        }}
+      />
+    );
+  }
   if (phase === "error") return (<Center><p style={{ ...S.loadText, maxWidth: 360 }}>{errMsg}</p></Center>);
   if (phase === "loading") return (<Center><Logo size="lg" /><p style={S.loadText} dir="rtl">ثواني يا معلم… الهيئة بتسخّن</p></Center>);
   if (phase === "auth") return (<AuthScreen />);
@@ -506,6 +528,21 @@ function MemePop({ src, localSrc, caption, onClose, actionLabel = "تمام", on
   );
 }
 
+function authFailKind(error) {
+  const code = `${error?.code || ""}`.toLowerCase();
+  const blob = `${error?.message || ""} ${code}`.toLowerCase();
+  if (code === "user_already_exists" || blob.includes("already registered") || blob.includes("user already")) return "exists";
+  if (code === "email_not_confirmed" || blob.includes("not confirmed") || blob.includes("email not confirmed")) return "confirm";
+  if (code === "invalid_credentials" || blob.includes("invalid login") || blob.includes("invalid_credentials")) return "credentials";
+  return "other";
+}
+
+function existingAccountErr(kind) {
+  if (kind === "confirm") return "الحساب موجود. أكّد الإيميل من الرسالة وبعدين ادخل.";
+  if (kind === "credentials") return "الحساب موجود. الباسورد غلط — ادخل الصح، أو اضغط نسيت الباسورد.";
+  return "الحساب موجود. ادخل من هنا.";
+}
+
 /* ─────────────── Auth ─────────────── */
 function AuthScreen() {
   const [mode, setMode] = useState("signin"); // signin | signup
@@ -514,31 +551,85 @@ function AuthScreen() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
-  const [noAccount, setNoAccount] = useState(false);
+
+  const finishLogin = () => {
+    sessionStorage.setItem("hayat_bravo", "1");
+  };
+
+  const trySignIn = async (mail, password) => {
+    const { error } = await supabase.auth.signInWithPassword({ email: mail, password });
+    if (error) throw error;
+    finishLogin();
+  };
+
+  const loginIfExists = async (mail) => {
+    try {
+      await trySignIn(mail, pw);
+      return true;
+    } catch (inErr) {
+      setMode("signin");
+      setErr(existingAccountErr(authFailKind(inErr)));
+      return false;
+    }
+  };
 
   const submit = async () => {
-    setErr(""); setOk(""); setNoAccount(false);
-    if (!email.trim() || pw.length < 6) return setErr("إيميل وباسورد من 6 حروف… مش أصعب من كده.");
+    setErr(""); setOk("");
+    const mail = email.trim().toLowerCase();
+    if (!mail || pw.length < 6) return setErr("إيميل وباسورد من 6 حروف… مش أصعب من كده.");
     setBusy(true);
     try {
       if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({ email: email.trim(), password: pw });
-        if (error) throw error;
-        setOk("الحساب اتفتح. لو التأكيد شغال، بصّ في الإيميل وبعدين ادخل.");
-        setMode("signin");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw });
+        const { data, error } = await supabase.auth.signUp({ email: mail, password: pw });
         if (error) {
-          const blob = `${error.message || ""} ${error.code || ""}`.toLowerCase();
-          if (blob.includes("invalid") || blob.includes("credential") || error.status === 400) {
-            setNoAccount(true);
+          if (authFailKind(error) === "exists") {
+            await loginIfExists(mail);
             return;
           }
           throw error;
         }
-        sessionStorage.setItem("hayat_bravo", "1");
+        if (data?.session) {
+          finishLogin();
+          return;
+        }
+        const already = Array.isArray(data?.user?.identities) && data.user.identities.length === 0;
+        if (already) {
+          await loginIfExists(mail);
+          return;
+        }
+        try {
+          await trySignIn(mail, pw);
+        } catch {
+          setOk("الحساب اتفتح. لو جاتلك رسالة تأكيد، افتحها وبعدين ادخل.");
+          setMode("signin");
+        }
+      } else {
+        try {
+          await trySignIn(mail, pw);
+        } catch (inErr) {
+          const kind = authFailKind(inErr);
+          if (kind === "confirm") setErr("أكّد الإيميل الأول من الرسالة اللي وصلتلك.");
+          else if (kind === "credentials") setErr("الإيميل أو الباسورد غلط. لو نسيت الباسورد اضغط نسيت الباسورد.");
+          else throw inErr;
+        }
       }
     } catch (e) { setErr(e.message || "ما نفعش يا معلم. جرّب تاني."); }
+    finally { setBusy(false); }
+  };
+
+  const sendReset = async () => {
+    setErr(""); setOk("");
+    const mail = email.trim().toLowerCase();
+    if (!mail) return setErr("اكتب الإيميل الأول.");
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(mail, {
+        redirectTo: `${window.location.origin}/`,
+      });
+      if (error) throw error;
+      setOk("لو الحساب موجود، هتوصلك رسالة فيها لينك تغيير الباسورد. بصّ الإيميل.");
+      setMode("signin");
+    } catch (e) { setErr(e.message || "ما قدرناش نبعت الرسالة."); }
     finally { setBusy(false); }
   };
 
@@ -556,6 +647,9 @@ function AuthScreen() {
         <button style={{ ...S.primaryBtn, width: "100%", marginTop: 16, opacity: busy ? 0.7 : 1 }} onClick={submit} disabled={busy}>
           {busy ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : mode === "signup" ? "افتح ملف" : "ادخل يا معلم"}
         </button>
+        {mode === "signin" && (
+          <button type="button" style={S.linkBtn} onClick={sendReset} disabled={busy}>نسيت الباسورد؟</button>
+        )}
         {mode === "signup" ? (
           <button style={S.linkBtn} onClick={() => { setMode("signin"); setErr(""); setOk(""); }}>عندك حساب؟ ادخل</button>
         ) : (
@@ -565,15 +659,46 @@ function AuthScreen() {
           </div>
         )}
       </div>
-      {noAccount && (
-        <MemePop
-          src="/memes/auth-no-account.jpg"
-          caption="باعم مش لما تعمل اكونت الأول"
-          actionLabel="يلا نعمل حساب"
-          onClose={() => setNoAccount(false)}
-          onAction={() => { setNoAccount(false); setMode("signup"); setErr(""); }}
-        />
-      )}
+    </Center>
+  );
+}
+
+function ResetPasswordScreen({ onDone }) {
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const save = async () => {
+    setErr("");
+    if (pw.length < 6) return setErr("باسورد من 6 حروف… مش أصعب من كده.");
+    if (pw !== pw2) return setErr("الباسورد والاتنين مش زي بعض.");
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pw });
+      if (error) throw error;
+      try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ }
+      sessionStorage.setItem("hayat_bravo", "1");
+      onDone();
+    } catch (e) { setErr(e.message || "ما حفظناش الباسورد. جرّب تاني."); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Center>
+      <div style={S.signCard} dir="rtl">
+        <Logo size="lg" className="auth-logo" />
+        <h1 style={{ ...S.brandTitle, textAlign: "center" }}>باسورد جديد</h1>
+        <p style={{ ...S.authTagline, marginBottom: 16 }}>اكتب الباسورد الجديد وبعدين ادخل عادي</p>
+        <label style={S.label}>الباسورد الجديد</label>
+        <input style={S.input} type="password" value={pw} placeholder="••••••••" onChange={(e) => setPw(e.target.value)} autoFocus />
+        <label style={{ ...S.label, marginTop: 14 }}>تأكيد الباسورد</label>
+        <input style={S.input} type="password" value={pw2} placeholder="••••••••" onChange={(e) => setPw2(e.target.value)} onKeyDown={(e) => e.key === "Enter" && save()} />
+        {err && <p style={S.errText}>{err}</p>}
+        <button style={{ ...S.primaryBtn, width: "100%", marginTop: 16, opacity: busy ? 0.7 : 1 }} onClick={save} disabled={busy}>
+          {busy ? <><RefreshCw size={16} className="spin" /> ثواني ثواني…</> : "حفظ الباسورد"}
+        </button>
+      </div>
     </Center>
   );
 }
@@ -2373,7 +2498,6 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
   const [memeBusy, setMemeBusy] = useState(false);
   const [memeSit, setMemeSit] = useState("second_item");
   const [waveBusy, setWaveBusy] = useState("");
-  const [nowTick, setNowTick] = useState(() => Date.now());
   const [officers, setOfficers] = useState([]);
   const qrInput = useRef(null);
   const logoInput = useRef(null);
@@ -2396,10 +2520,7 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
         return next;
       });
     };
-    const t = setInterval(() => {
-      setNowTick(Date.now());
-      syncDay();
-    }, 30000);
+    const t = setInterval(syncDay, 30000);
     const onVis = () => { if (!document.hidden) syncDay(); };
     document.addEventListener("visibilitychange", onVis);
     window.addEventListener("focus", syncDay);
@@ -2546,7 +2667,7 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
 
   const pingRun = async (run) => {
     if (!runCanPing(run)) {
-      showToast(run?.closed ? "عدّى 10 دقايق على قفل الأوردر." : "مفيش أوردر.");
+      showToast("مفيش أوردر.");
       return;
     }
     const targets = (run.orders || []).filter((o) => !isOrderCancelled(o) && !isOrderReturned(o));
@@ -2755,7 +2876,7 @@ function AdminView({ narrow, showToast, profile, catalog = [], loadMenu }) {
   };
 
   const runActs = (run) => {
-    const canPing = runCanPing(run, nowTick);
+    const canPing = runCanPing(run);
     const canClose = !run.closed;
     return (
       <div style={S.runActs}>
